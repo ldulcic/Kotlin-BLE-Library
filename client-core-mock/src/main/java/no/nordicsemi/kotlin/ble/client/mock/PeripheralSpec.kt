@@ -35,6 +35,9 @@ package no.nordicsemi.kotlin.ble.client.mock
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -147,7 +150,46 @@ class PeripheralSpec<ID: Any> private constructor(
     private val _events: MutableSharedFlow<GattEvent> = MutableSharedFlow(extraBufferCapacity = 64)
     val events: SharedFlow<GattEvent> = _events.asSharedFlow()
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    /**
+     * The scope in which the simulation work of this spec (delayed timers, monitoring jobs) runs.
+     *
+     * When the spec is registered with a mock central manager
+     * (see `SimulationProvider.simulatePeripherals`), the scope is derived from the scope given
+     * to that manager, so that the entire simulation runs on a dispatcher — and clock —
+     * controlled by the user, e.g. a test scheduler. Until attached (or after the simulation
+     * is torn down) it falls back to a standalone scope on [Dispatchers.IO], preserving the
+     * behavior for specs never registered with a manager.
+     */
+    private var simulationScope: CoroutineScope? = null
+    private val fallbackScope by lazy { CoroutineScope(Dispatchers.IO) }
+    private val scope: CoroutineScope get() = simulationScope ?: fallbackScope
+
+    /**
+     * Binds the simulation work of this spec to the given parent scope.
+     *
+     * Work started under a previous attachment is cancelled: the last attachment wins.
+     *
+     * @return The derived scope. Pass it to [detach] to cancel the simulation work.
+     */
+    internal fun attach(parent: CoroutineScope): CoroutineScope =
+        CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
+            .also { attachment ->
+                simulationScope?.cancel()
+                simulationScope = attachment
+            }
+
+    /**
+     * Cancels simulation work started under the given attachment.
+     *
+     * If the spec has been attached again since (e.g. to another central manager),
+     * the newer attachment is kept.
+     */
+    internal fun detach(attachment: CoroutineScope) {
+        attachment.cancel()
+        if (simulationScope === attachment) {
+            simulationScope = null
+        }
+    }
 
     /** The peripheral identifier. */
     var identifier: ID = identifier

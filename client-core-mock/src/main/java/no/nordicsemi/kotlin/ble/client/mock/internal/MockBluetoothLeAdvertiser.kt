@@ -53,6 +53,7 @@ class MockBluetoothLeAdvertiser<ID: Any>(
     val events = _advertisingEvents.asSharedFlow()
 
     private var jobs = mutableListOf<Job>()
+    private val attachments = mutableMapOf<PeripheralSpec<ID>, CoroutineScope>()
 
     /**
      * Simulates advertising for given peripheral specs.
@@ -66,6 +67,11 @@ class MockBluetoothLeAdvertiser<ID: Any>(
      */
     fun simulateAdvertising(peripherals: List<PeripheralSpec<ID>>) {
         peripherals.forEach { peripheralSpec ->
+            // Bind the simulation work of the spec (delayed timers, monitoring jobs) to the
+            // same scope the advertising runs on, so that the entire simulation is controlled
+            // by the scope given by the user and can be torn down deterministically.
+            attachments[peripheralSpec] = peripheralSpec.attach(scope)
+
             // If a peripheral has defined advertising data, begin mock advertising.
             peripheralSpec.advertisingSets?.forEach { advertisingSet ->
                 // Build the advertising parameters. We do this here once, as it doesn't change over time.
@@ -127,6 +133,8 @@ class MockBluetoothLeAdvertiser<ID: Any>(
     fun cancel() {
         jobs.forEach { it.cancel() }
         jobs.clear()
+        attachments.forEach { (peripheralSpec, attachment) -> peripheralSpec.detach(attachment) }
+        attachments.clear()
     }
 
 }
