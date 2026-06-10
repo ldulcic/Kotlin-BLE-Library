@@ -50,6 +50,9 @@ dependencies {
     api(project(":client-core-mock"))
     api(project(":client-core-android"))
     api(project(":environment-android-mock"))
+
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 dokka {
