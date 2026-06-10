@@ -70,16 +70,19 @@ import kotlin.time.Duration
  *
  * @param scope The coroutine scope.
  * @property environment The environment to use for the mock, defaults to the latest supported API.
+ * @param currentTimeMillis The time source used for scan result timestamps, defaults to the
+ * system clock. Tests using virtual time may provide a time source based on the test scheduler.
  */
-open class MockCentralManagerImpl(
+open class MockCentralManagerImpl @JvmOverloads constructor(
     scope: CoroutineScope,
     private val environment: MockAndroidEnvironment = LatestApi(),
+    currentTimeMillis: () -> Long = { System.currentTimeMillis() },
 ): MockCentralManager, CentralManagerImpl(scope, environment) {
     override var logger: Log.Sink<Layer>? = Log.Sink.Null
 
     // Simulation methods
     private var peripheralSpecs = mutableListOf<PeripheralSpec<String>>()
-    private val mockAdvertiser = MockBluetoothLeAdvertiser<String>(scope)
+    private val mockAdvertiser = MockBluetoothLeAdvertiser<String>(scope, currentTimeMillis)
 
     override fun simulatePeripherals(peripherals: List<PeripheralSpec<String>>) {
         require(peripheralSpecs.isEmpty()) {

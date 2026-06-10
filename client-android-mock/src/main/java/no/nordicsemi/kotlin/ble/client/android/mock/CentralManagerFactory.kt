@@ -48,9 +48,32 @@ import no.nordicsemi.kotlin.ble.environment.android.mock.MockAndroidEnvironment
  * methods from [SimulationProvider] to control the simulation.
  *
  * @param environment The environment to use for the mock, defaults to the latest supported API.
- * @param scope The coroutine scope.
+ * @param scope The coroutine scope. The entire simulation runs on this scope, so passing
+ * a scope backed by a test dispatcher (e.g. `backgroundScope` of `runTest`) makes the mock
+ * fully controllable by the test scheduler and its virtual time.
  */
 fun CentralManager.Factory.mock(
     environment: MockAndroidEnvironment = LatestApi(),
     scope: CoroutineScope,
 ): MockCentralManager = MockCentralManagerImpl(scope, environment)
+
+/**
+ * Creates a mock implementation of a [CentralManager] that can emulate scanning and connecting
+ * to Bluetooth Low Energy devices.
+ *
+ * Use [MockCentralManager.simulatePeripherals] to set up mock peripherals and other
+ * methods from [SimulationProvider] to control the simulation.
+ *
+ * @param environment The environment to use for the mock, defaults to the latest supported API.
+ * @param scope The coroutine scope. The entire simulation runs on this scope, so passing
+ * a scope backed by a test dispatcher (e.g. `backgroundScope` of `runTest`) makes the mock
+ * fully controllable by the test scheduler and its virtual time.
+ * @param currentTimeMillis The time source used for scan result timestamps, defaults to the
+ * system clock. Tests using virtual time may provide a time source based on the test scheduler,
+ * e.g. `{ testScheduler.currentTime }`.
+ */
+fun CentralManager.Factory.mock(
+    environment: MockAndroidEnvironment = LatestApi(),
+    scope: CoroutineScope,
+    currentTimeMillis: () -> Long,
+): MockCentralManager = MockCentralManagerImpl(scope, environment, currentTimeMillis)

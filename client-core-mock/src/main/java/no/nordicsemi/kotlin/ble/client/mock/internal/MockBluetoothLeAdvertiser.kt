@@ -47,8 +47,9 @@ import no.nordicsemi.kotlin.ble.core.Bluetooth5AdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.Environment
 
-class MockBluetoothLeAdvertiser<ID: Any>(
+class MockBluetoothLeAdvertiser<ID: Any> @JvmOverloads constructor(
     private val scope: CoroutineScope,
+    private val currentTimeMillis: () -> Long = { System.currentTimeMillis() },
 ) {
     // A real advertiser is fire-and-forget: it transmits on its advertising interval no matter
     // who is listening. A small buffer with DROP_OLDEST makes emissions non-suspending, so that
@@ -123,7 +124,7 @@ class MockBluetoothLeAdvertiser<ID: Any>(
                                         txPowerLevel = txPowerLevel,
                                         primaryPhy = primaryPhy,
                                         secondaryPhy = secondaryPhy,
-                                        timestamp = System.currentTimeMillis() // TODO different time
+                                        timestamp = currentTimeMillis()
                                     )
                                     _advertisingEvents.emit(scanResult)
                                 }
