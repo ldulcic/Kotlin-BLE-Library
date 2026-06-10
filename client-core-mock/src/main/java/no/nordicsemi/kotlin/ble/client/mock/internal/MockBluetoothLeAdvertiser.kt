@@ -35,6 +35,7 @@ package no.nordicsemi.kotlin.ble.client.mock.internal
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -49,7 +50,15 @@ import no.nordicsemi.kotlin.ble.core.Environment
 class MockBluetoothLeAdvertiser<ID: Any>(
     private val scope: CoroutineScope,
 ) {
-    private val _advertisingEvents = MutableSharedFlow<MockScanResult<ID>>()
+    // A real advertiser is fire-and-forget: it transmits on its advertising interval no matter
+    // who is listening. A small buffer with DROP_OLDEST makes emissions non-suspending, so that
+    // a subscriber which cannot keep up loses packets instead of stalling the advertiser
+    // (and thus all other subscribers). With no replay, late subscribers never see past
+    // advertisements — just like a real scanner.
+    private val _advertisingEvents = MutableSharedFlow<MockScanResult<ID>>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     val events = _advertisingEvents.asSharedFlow()
 
     private var jobs = mutableListOf<Job>()
