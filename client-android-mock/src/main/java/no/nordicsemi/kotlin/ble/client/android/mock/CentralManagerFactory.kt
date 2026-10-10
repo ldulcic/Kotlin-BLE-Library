@@ -47,6 +47,10 @@ import no.nordicsemi.kotlin.ble.environment.android.mock.MockAndroidEnvironment
  * Use [MockCentralManager.simulatePeripherals] to set up mock peripherals and other
  * methods from [SimulationProvider] to control the simulation.
  *
+ * Advertising and the background work of the simulated peripherals, like link loss or
+ * notifications, run in the given [scope]. A scope backed by a test dispatcher, e.g.
+ * `backgroundScope` of `runTest`, makes them follow the test scheduler and its virtual time.
+ *
  * @param environment The environment to use for the mock, defaults to the latest supported API.
  * @param scope The coroutine scope.
  */

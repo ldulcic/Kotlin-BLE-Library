@@ -35,6 +35,9 @@ package no.nordicsemi.kotlin.ble.client.mock
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -44,6 +47,7 @@ import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import no.nordicsemi.kotlin.ble.client.CentralManager
 import no.nordicsemi.kotlin.ble.client.ConnectionParametersChanged
@@ -83,6 +87,7 @@ import no.nordicsemi.kotlin.ble.core.mock.AdvertisingDataScope
 import no.nordicsemi.kotlin.ble.core.mock.MockEnvironment
 import no.nordicsemi.kotlin.ble.core.mock.internal.AdvertisingDataScopeImpl
 import org.jetbrains.annotations.Range
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.time.Duration
@@ -147,7 +152,59 @@ class PeripheralSpec<ID: Any> private constructor(
     private val _events: MutableSharedFlow<GattEvent> = MutableSharedFlow(extraBufferCapacity = 64)
     val events: SharedFlow<GattEvent> = _events.asSharedFlow()
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    /**
+     * Scopes of the mock central managers simulating this peripheral, oldest first.
+     *
+     * @see attach
+     */
+    private val simulationScopes = AtomicReference<List<CoroutineScope>>(emptyList())
+
+    /** The scope used when the peripheral is not simulated by any mock central manager. */
+    private val fallbackScope by lazy { CoroutineScope(Dispatchers.IO) }
+
+    /**
+     * The scope in which the simulation work of this peripheral runs, i.e. delayed events
+     * received by all connected clients, like link loss, notifications or MTU changes.
+     *
+     * This is the scope of the mock central manager that started simulating this peripheral
+     * most recently and is still active, so that the simulation follows the dispatcher and
+     * the clock given to that manager, e.g. a test scheduler. Managers simulating the same
+     * peripheral should use the same clock, e.g. one test scheduler.
+     *
+     * Work keeps the scope it was started in: if that manager's scope is cancelled or its
+     * simulation is torn down, its pending work is cancelled, also for other managers connected
+     * to this peripheral, and new work runs in the scope of the next active manager. Work of
+     * a single connection runs in the scope of the manager that created it instead, see [Api].
+     */
+    private val scope: CoroutineScope
+        get() = simulationScopes.get().lastOrNull { it.isActive } ?: fallbackScope
+
+    /**
+     * Starts simulating this peripheral in the scope of a mock central manager.
+     *
+     * The returned scope uses a [SupervisorJob]: a failure in one piece of simulation work
+     * doesn't cancel the rest of the simulation or the manager's scope. It is reported to the
+     * exception handler of the manager's scope instead, which e.g. fails a test using `runTest`.
+     *
+     * @param parent The scope of the mock central manager.
+     * @return The scope of the simulation. Pass it to [detach] to stop the simulation.
+     */
+    internal fun attach(parent: CoroutineScope): CoroutineScope =
+        CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
+            .also { simulation ->
+                // Scopes of managers that have been closed in the meantime are dropped here.
+                simulationScopes.updateAndGet { scopes -> scopes.filter { it.isActive } + simulation }
+            }
+
+    /**
+     * Stops the simulation started with [attach], canceling all work started in its scope.
+     *
+     * @param simulation The scope returned by [attach].
+     */
+    internal fun detach(simulation: CoroutineScope) {
+        simulation.cancel()
+        simulationScopes.updateAndGet { scopes -> scopes - simulation }
+    }
 
     /** The peripheral identifier. */
     var identifier: ID = identifier
@@ -723,6 +780,7 @@ class PeripheralSpec<ID: Any> private constructor(
      * @param environment The mock environment.
      * @param autoConnect Whether to use auto-connect mode.
      * @param advertisements A flow of advertisements emitted by the mock advertiser.
+     * @param managerScope The scope of the mock central manager connecting to the peripheral.
      * @return The mock GATT object.
      */
     internal suspend fun connectGatt(
@@ -731,8 +789,9 @@ class PeripheralSpec<ID: Any> private constructor(
         autoMtu: Boolean,
         opportunistic: Boolean,
         advertisements: Flow<MockScanResult<*>>,
+        managerScope: CoroutineScope,
     ): Api {
-        return Api(environment).also { gatt ->
+        return Api(environment, managerScope).also { gatt ->
             // If the mock peripheral is already connected (to the phone) and another
             // (virtual) client (that is Peripheral instance) tries to connect to it,
             // just notify about the success.
@@ -777,9 +836,18 @@ class PeripheralSpec<ID: Any> private constructor(
     }
 
     /**
+     * A mock GATT connection of a single client.
+     *
+     * Jobs of the connection run in the scope of the mock central manager that created it,
+     * so they don't depend on other managers simulating the same peripheral.
+     *
+     * @param managerScope The scope of the mock central manager that created the connection.
      * @hide
      */
-    inner class Api internal constructor(val environment: MockEnvironment) {
+    inner class Api internal constructor(
+        val environment: MockEnvironment,
+        private val managerScope: CoroutineScope,
+    ) {
         /**
          * A job for observing [ServicesChanged] events, that invalidates the service cache.
          *
@@ -788,7 +856,7 @@ class PeripheralSpec<ID: Any> private constructor(
         private val cacheMonitoring = events
             .filterIsInstance<ServicesChanged>()
             .onEach { cachedServices = null }
-            .launchIn(scope)
+            .launchIn(managerScope)
 
         /** Closes the GATT connection. */
         internal fun close() {
@@ -935,7 +1003,7 @@ class PeripheralSpec<ID: Any> private constructor(
 
                     // Restore connection parameters.
                     if (environment.reportsConnectionParameters) {
-                        scope.launch {
+                        managerScope.launch {
                             delay(connectionInterval * 2)
                             _events.emit(ConnectionParametersChanged(connectionParameters))
                         }

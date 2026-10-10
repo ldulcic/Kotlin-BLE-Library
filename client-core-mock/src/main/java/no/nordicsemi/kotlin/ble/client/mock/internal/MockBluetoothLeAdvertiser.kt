@@ -32,7 +32,6 @@
 package no.nordicsemi.kotlin.ble.client.mock.internal
 
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -51,7 +50,8 @@ class MockBluetoothLeAdvertiser<ID: Any>(
     private val _advertisingEvents = MutableSharedFlow<MockScanResult<ID>>()
     val events = _advertisingEvents.asSharedFlow()
 
-    private var jobs = mutableListOf<Job>()
+    /** The scopes in which the peripherals are simulated, see [PeripheralSpec.attach]. */
+    private val simulations = mutableMapOf<PeripheralSpec<ID>, CoroutineScope>()
 
     /**
      * Simulates advertising for given peripheral specs.
@@ -60,11 +60,19 @@ class MockBluetoothLeAdvertiser<ID: Any>(
      * It does not take under consideration the [Environment], i.e. packets using
      * LE Coded PHY will advertise, and it is up to the scanner to filter them or not.
      *
+     * The peripherals are simulated in the scope of this advertiser until [cancel] is called.
+     *
      * @param peripherals The list of peripheral specs simulating advertising.
      * @return A flow emitting [MockScanResult]s for each advertising event.
      */
     fun simulateAdvertising(peripherals: List<PeripheralSpec<ID>>) {
         peripherals.forEach { peripheralSpec ->
+            // Both the advertising below and the simulation work of the peripheral itself
+            // (timers, monitoring jobs) run in this scope. A peripheral given twice replaces
+            // its previous simulation.
+            val simulation = peripheralSpec.attach(scope)
+            simulations.put(peripheralSpec, simulation)?.let { peripheralSpec.detach(it) }
+
             // If a peripheral has defined advertising data, begin mock advertising.
             peripheralSpec.advertisingSets?.forEach { advertisingSet ->
                 // Build the advertising parameters. We do this here once, as it doesn't change over time.
@@ -83,7 +91,7 @@ class MockBluetoothLeAdvertiser<ID: Any>(
                 // * the maximum number of advertising events is reached,
                 // * the simulation is tear down
                 // * the scope is closed
-                val job = scope.launch {
+                simulation.launch {
                     // First, delay the advertising if needed.
                     delay(advertisingSet.delay)
 
@@ -118,14 +126,13 @@ class MockBluetoothLeAdvertiser<ID: Any>(
                         }
                     }
                 }
-                jobs.add(job)
             }
         }
     }
 
     fun cancel() {
-        jobs.forEach { it.cancel() }
-        jobs.clear()
+        simulations.forEach { (peripheralSpec, simulation) -> peripheralSpec.detach(simulation) }
+        simulations.clear()
     }
 
 }
