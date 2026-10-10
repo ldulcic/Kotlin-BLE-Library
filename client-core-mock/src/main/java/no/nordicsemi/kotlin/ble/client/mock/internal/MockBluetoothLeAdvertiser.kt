@@ -45,8 +45,15 @@ import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.Environment
 import kotlin.time.Clock
 
+/**
+ * A mock advertiser emitting advertising events of simulated peripherals.
+ *
+ * @param scope The scope of the mock central manager.
+ * @param clock The clock used for timestamps of the advertising events.
+ */
 class MockBluetoothLeAdvertiser<ID: Any>(
     private val scope: CoroutineScope,
+    private val clock: Clock = Clock.System,
 ) {
     private val _advertisingEvents = MutableSharedFlow<MockScanResult<ID>>()
     val events = _advertisingEvents.asSharedFlow()
@@ -107,7 +114,7 @@ class MockBluetoothLeAdvertiser<ID: Any>(
                                         txPowerLevel = txPowerLevel,
                                         primaryPhy = primaryPhy,
                                         secondaryPhy = secondaryPhy,
-                                        timestamp = Clock.System.now()
+                                        timestamp = clock.now()
                                     )
                                     _advertisingEvents.emit(scanResult)
                                 }

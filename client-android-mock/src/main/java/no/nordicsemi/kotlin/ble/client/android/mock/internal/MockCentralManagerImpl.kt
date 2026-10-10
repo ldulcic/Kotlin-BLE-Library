@@ -61,6 +61,7 @@ import no.nordicsemi.kotlin.ble.core.log.Layer
 import no.nordicsemi.kotlin.ble.environment.android.mock.LatestApi
 import no.nordicsemi.kotlin.ble.environment.android.mock.MockAndroidEnvironment
 import no.nordicsemi.kotlin.log.Log
+import kotlin.time.Clock
 import kotlin.time.Duration
 
 /**
@@ -68,16 +69,18 @@ import kotlin.time.Duration
  *
  * @param scope The coroutine scope.
  * @property environment The environment to use for the mock, defaults to the latest supported API.
+ * @param clock The clock used for timestamps of scan results, defaults to the system clock.
  */
 open class MockCentralManagerImpl(
     scope: CoroutineScope,
     private val environment: MockAndroidEnvironment = LatestApi(),
+    clock: Clock = Clock.System,
 ): MockCentralManager, CentralManagerImpl(scope, environment) {
     override var logger: Log.Sink<Layer>? = Log.Sink.Null
 
     // Simulation methods
     private var peripheralSpecs = mutableListOf<PeripheralSpec<String>>()
-    private val mockAdvertiser = MockBluetoothLeAdvertiser<String>(scope)
+    private val mockAdvertiser = MockBluetoothLeAdvertiser<String>(scope, clock)
 
     override fun simulatePeripherals(peripherals: List<PeripheralSpec<String>>) {
         require(peripheralSpecs.isEmpty()) {
