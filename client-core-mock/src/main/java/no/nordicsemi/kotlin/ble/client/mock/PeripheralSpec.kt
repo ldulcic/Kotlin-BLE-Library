@@ -1147,7 +1147,8 @@ class PeripheralSpec<ID: Any> private constructor(
         /**
          * Adds an advertising set to the peripheral advertisement configuration.
          *
-         * @param parameters The advertising parameters.
+         * @param parameters The advertising parameters. As on a real device, the time between
+         * advertising events is the interval plus a random 0-10 ms.
          * @param delay The delay before the advertising starts.
          * @param timeout The advertising timeout, since the start of advertising. By default, set to infinite.
          * @param isAdvertisingWhenConnected Whether the device should advertise when connected.
@@ -1176,7 +1177,8 @@ class PeripheralSpec<ID: Any> private constructor(
         /**
          * Adds an advertising set to the peripheral advertisement configuration.
          *
-         * @param parameters The advertising parameters.
+         * @param parameters The advertising parameters. As on a real device, the time between
+         * advertising events is the interval plus a random 0-10 ms.
          * @param delay The delay before the advertising starts.
          * @param maxAdvertisingEvents The maximum number of advertising events, in range 1..255.
          * @param isAdvertisingWhenConnected Whether the device should advertise when connected.
