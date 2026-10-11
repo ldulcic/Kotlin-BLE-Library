@@ -87,6 +87,10 @@ interface CentralManager<
      *
      * The scan will be stopped after the given period of time or when the flow is canceled.
      *
+     * Results are queued while the collector is busy, and a collector that falls behind loses
+     * some of them. To choose which ones are kept, apply `conflate()` or a `buffer` with
+     * `DROP_OLDEST` or `DROP_LATEST` to the returned flow, e.g. `buffer(64, DROP_LATEST)`.
+     *
      * @param timeout The scan duration. By default, the scan will run until the flow is closed.
      * @param filter The filter to apply. By default, no filter is applied.
      * @throws ManagerClosedException If the central manager has been closed.

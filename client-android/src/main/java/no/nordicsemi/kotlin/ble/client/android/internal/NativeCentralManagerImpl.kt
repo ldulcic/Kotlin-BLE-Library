@@ -41,11 +41,13 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
@@ -172,6 +174,9 @@ internal class NativeCentralManagerImpl(
                 scanJellyBean(timeout, filter, ::closeWithCallSite)
             }
         }
+            // If the collector falls behind, keep the newest 64 results rather than the oldest.
+            // Not Channel.BUFFERED: with DROP_OLDEST, it means a buffer of 1 instead of 64.
+            .buffer(64, BufferOverflow.DROP_OLDEST)
     }
 
     override fun monitor(
