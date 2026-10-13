@@ -339,21 +339,18 @@ open class MockCentralManagerImpl(
             if (address.length != ADDRESS_LENGTH) {
                 return false
             }
-            for (i in 0..<ADDRESS_LENGTH) {
+            for (i in 0 until ADDRESS_LENGTH) {
                 val c = address[i]
                 when (i % 3) {
                     0, 1 -> {
-                        if ((c in '0'..'9') || (c in 'A'..'F')) {
-                            // hex character, OK
-                            break
+                        if ((c !in '0'..'9') && (c !in 'A'..'F')) {
+                            return false
                         }
-                        return false
                     }
                     2 -> {
-                        if (c == ':') {
-                            break // OK
+                        if (c != ':') {
+                            return false
                         }
-                        return false
                     }
                 }
             }
