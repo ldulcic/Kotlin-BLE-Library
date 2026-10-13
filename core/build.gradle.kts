@@ -51,6 +51,13 @@ kotlin {
                 api(nordic.log)
             }
         }
+        commonTest {
+            kotlin.srcDir("src/test/java")
+            dependencies {
+                implementation(libs.kotlin.test)
+                implementation(libs.kotlinx.coroutines.test)
+            }
+        }
         jvmMain {
             kotlin.srcDir("src/jvmMain/kotlin")
         }
