@@ -43,6 +43,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import no.nordicsemi.kotlin.ble.client.MonitoringEvent
 import no.nordicsemi.kotlin.ble.client.RangeEvent
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
+import no.nordicsemi.kotlin.ble.client.android.CentralManager.ScanOptions
 import no.nordicsemi.kotlin.ble.client.android.ConjunctionFilterScope
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.android.ScanResult
@@ -191,6 +192,7 @@ open class MockCentralManagerImpl(
 
     override fun scan(
         timeout: Duration,
+        options: ScanOptions,
         filter: ConjunctionFilterScope.() -> Unit
     ): Flow<ScanResult> {
         // Ensure the central manager has not been closed.
@@ -204,10 +206,28 @@ open class MockCentralManagerImpl(
         // Verify the BLUETOOTH_SCAN permission is granted (Android 12+).
         checkScanningPermission()
 
+        // The PHY is ignored when scanning for legacy advertisements only, as legacy advertisements
+        // are always sent on LE 1M.
+        val phy = options.phy.takeUnless { options.legacyOnly }
+
+        // Scanning on LE Coded requires Android 8 and a phone that supports it.
+        if (phy == PrimaryPhy.PHY_LE_CODED && !environment.isLeCodedPhySupported) {
+            throw ScanningFailedToStartException(ScanningFailedToStartException.Reason.FeatureUnsupported)
+        }
+
         // Build the filter based on the provided builder
         val filters = ConjunctionFilter().apply(filter).filters
+
+        // The scan mode is not simulated. The mock receives every advertisement, like with
+        // ScanMode.LOW_LATENCY. Passive scanning is available from Android 16 QPR2. The mock
+        // doesn't model minor versions, so Android 16 counts as Android 16 QPR2. The mock also
+        // doesn't separate scan responses from advertising data, so passive scan results still
+        // include the scan response data.
+        val passive = options.passive &&
+            environment.androidSdkVersion >= AndroidEnvironment.SdkVersion.BAKLAVA
+
         logger?.trace(Layer.GAP) {
-            "Starting scanning with ${filters?.let { "filters: $it" } ?: "no filters"}"
+            "Starting scanning with $options and ${filters?.let { "filters: $it" } ?: "no filters"}"
         }
 
         return channelFlow {
@@ -228,9 +248,9 @@ open class MockCentralManagerImpl(
 
                     // Some phones send only one Scan Request to connectable devices per scan.
                     // Such devices are only reported once. Non-connectable devices, which only
-                    // send Advertising Data, are reported continuously.
-                    // TODO Modify to support passive scan on Android 16+
-                    if (environment.issueOnlyOneActiveScan) {
+                    // send Advertising Data, are reported continuously. A passive scan doesn't
+                    // send Scan Requests at all, so it reports all devices continuously.
+                    if (environment.issueOnlyOneActiveScan && !passive) {
                         if (result.isConnectable) {
                             if (cache.contains(result.peripheralSpec.identifier)) {
                                 return@collect
@@ -269,7 +289,18 @@ open class MockCentralManagerImpl(
                         return@collect
                     }
 
-                    // TODO We're assuming that we scan with "ALL_SUPPORTED" PHYs, as this is not configurable in Native scanner yet.
+                    // Extended advertisements, which are the ones with a secondary PHY, are not
+                    // reported when scanning for legacy advertisements only, or by phones without
+                    // LE Extended Advertising support, which includes all phones before Android 8.
+                    if ((options.legacyOnly || !environment.isLeExtendedAdvertisingSupported) &&
+                        result.secondaryPhy != null) {
+                        return@collect
+                    }
+
+                    // When scanning on a single PHY, ignore advertisements sent on the other one.
+                    if (phy != null && result.primaryPhy != phy) {
+                        return@collect
+                    }
 
                     // The mock scanner found the device and cached its MAC address.
                     result.peripheralSpec.simulateCaching()

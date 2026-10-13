@@ -56,11 +56,13 @@ import kotlinx.coroutines.launch
 import no.nordicsemi.kotlin.ble.client.MonitoringEvent
 import no.nordicsemi.kotlin.ble.client.RangeEvent
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
+import no.nordicsemi.kotlin.ble.client.android.CentralManager.ScanOptions
 import no.nordicsemi.kotlin.ble.client.android.ConjunctionFilterScope
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.android.ScanResult
 import no.nordicsemi.kotlin.ble.client.android.exception.ScanningFailedToStartException
 import no.nordicsemi.kotlin.ble.core.BondState
+import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.exception.BluetoothUnavailableException
 import no.nordicsemi.kotlin.ble.core.internal.CallSiteException
 import no.nordicsemi.kotlin.ble.core.log.Layer
@@ -144,6 +146,7 @@ internal class NativeCentralManagerImpl(
 
     override fun scan(
         timeout: Duration,
+        options: ScanOptions,
         filter: ConjunctionFilterScope.() -> Unit
     ): Flow<ScanResult> {
         // Captured immediately, on the caller's thread, before the flow below is even built.
@@ -169,9 +172,9 @@ internal class NativeCentralManagerImpl(
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                scanLollipop(timeout, filter, ::closeWithCallSite)
+                scanLollipop(timeout, options, filter, ::closeWithCallSite)
             } else {
-                scanJellyBean(timeout, filter, ::closeWithCallSite)
+                scanJellyBean(timeout, options, filter, ::closeWithCallSite)
             }
         }
             // If the collector falls behind, keep the newest 64 results rather than the oldest.
@@ -205,9 +208,19 @@ internal class NativeCentralManagerImpl(
 
     // Implementations
 
+    /**
+     * Whether the phone can scan on the selected PHY.
+     *
+     * Scanning on LE Coded requires Android 8 and a phone that supports it. The PHY is ignored
+     * when scanning for legacy advertisements only.
+     */
+    private val ScanOptions.isPhySupported: Boolean
+        get() = legacyOnly || phy != PrimaryPhy.PHY_LE_CODED || environment.isLeCodedPhySupported
+
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private suspend fun ProducerScope<ScanResult>.scanLollipop(
         timeout: Duration,
+        options: ScanOptions,
         filter: ConjunctionFilterScope.() -> Unit,
         closeWithCallSite: (Throwable) -> Unit
     ) {
@@ -228,17 +241,31 @@ internal class NativeCentralManagerImpl(
             return
         }
 
+        // Ensure the phone can scan on the selected PHY.
+        if (!options.isPhySupported) {
+            closeWithCallSite(ScanningFailedToStartException(ScanningFailedToStartException.Reason.FeatureUnsupported))
+            return
+        }
+
         // Build the filter based on the provided builder.
         val filters = ConjunctionFilter().apply(filter).filters
 
-        // Use the most optimal scan mode for low latency immediate scanning.
+        // Build the scan settings based on the scan options.
         val settings = NativeScanSettings.Builder()
             .apply {
-                // TODO Scan settings could be configurable.
-                setScanMode(NativeScanSettings.SCAN_MODE_LOW_LATENCY)
+                setScanMode(options.mode.toScanMode())
+                // Before Android 8 only legacy advertisements are reported.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    setLegacy(false)
-                    setPhy(NativeScanSettings.PHY_LE_ALL_SUPPORTED)
+                    setLegacy(options.legacyOnly)
+                    if (!options.legacyOnly) {
+                        setPhy(options.phy.toScanPhy())
+                    }
+                }
+                // Passive scanning is available from Android 16 QPR2 (API 36.1).
+                if (options.passive &&
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA &&
+                    Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1) {
+                    setScanType(NativeScanSettings.SCAN_TYPE_PASSIVE)
                 }
             }
             .build()
@@ -284,7 +311,7 @@ internal class NativeCentralManagerImpl(
 
         // Finally, start the scan.
         logger?.trace(Layer.GAP) {
-            "Starting scanning with ${filters?.let { "filters: $it" } ?: "no filters"}"
+            "Starting scanning with $options and ${filters?.let { "filters: $it" } ?: "no filters"}"
         }
         scanner.startScan(filters?.toNative(), settings, callback)
 
@@ -308,6 +335,7 @@ internal class NativeCentralManagerImpl(
     @Suppress("DEPRECATION")
     private suspend fun ProducerScope<ScanResult>.scanJellyBean(
         timeout: Duration,
+        options: ScanOptions,
         filter: ConjunctionFilterScope.() -> Unit,
         closeWithCallSite: (Throwable) -> Unit
     ) {
@@ -318,6 +346,12 @@ internal class NativeCentralManagerImpl(
                 closeWithCallSite(BluetoothUnavailableException())
                 return
             }
+
+        // Scan options can't be set before Android 5, but a scan on LE Coded must still fail.
+        if (!options.isPhySupported) {
+            closeWithCallSite(ScanningFailedToStartException(ScanningFailedToStartException.Reason.FeatureUnsupported))
+            return
+        }
 
         // Build the filter based on the provided builder.
         val filters = ConjunctionFilter().apply(filter).filters

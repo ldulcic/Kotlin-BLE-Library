@@ -35,12 +35,14 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanSettings
 import android.os.Build
 import android.os.SystemClock
 import androidx.annotation.RequiresApi
 import no.nordicsemi.kotlin.ble.client.android.AdvertisingData
 import no.nordicsemi.kotlin.ble.client.android.ConnectionPriority
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
+import no.nordicsemi.kotlin.ble.client.android.ScanMode
 import no.nordicsemi.kotlin.ble.client.android.ScanResult
 import no.nordicsemi.kotlin.ble.client.android.exception.ScanningFailedToStartException
 import no.nordicsemi.kotlin.ble.core.BondState
@@ -205,6 +207,25 @@ internal fun ConnectionPriority.toPriority() = when (this) {
             BluetoothGatt.CONNECTION_PRIORITY_DCK
         else
             BluetoothGatt.CONNECTION_PRIORITY_BALANCED
+}
+
+@RequiresApi(Build.VERSION_CODES.LOLLIPOP)
+internal fun ScanMode.toScanMode() = when (this) {
+    ScanMode.LOW_POWER -> ScanSettings.SCAN_MODE_LOW_POWER
+    ScanMode.BALANCED -> ScanSettings.SCAN_MODE_BALANCED
+    ScanMode.LOW_LATENCY -> ScanSettings.SCAN_MODE_LOW_LATENCY
+    ScanMode.OPPORTUNISTIC ->
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            ScanSettings.SCAN_MODE_OPPORTUNISTIC
+        else
+            ScanSettings.SCAN_MODE_LOW_POWER
+}
+
+@RequiresApi(Build.VERSION_CODES.O)
+internal fun PrimaryPhy?.toScanPhy() = when (this) {
+    PrimaryPhy.PHY_LE_1M -> BluetoothDevice.PHY_LE_1M
+    PrimaryPhy.PHY_LE_CODED -> BluetoothDevice.PHY_LE_CODED
+    null -> ScanSettings.PHY_LE_ALL_SUPPORTED
 }
 
 // Source: https://cs.android.com/android/platform/superproject/+/android-latest-release:packages/modules/Bluetooth/system/stack/include/gatt_api.h
