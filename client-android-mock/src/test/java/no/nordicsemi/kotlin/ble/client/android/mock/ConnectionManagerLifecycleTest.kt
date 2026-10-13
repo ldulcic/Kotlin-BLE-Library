@@ -162,7 +162,6 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("The mock does not validate the Bluetooth address (checkBluetoothAddress leaves the loop early).")
     fun `retrieving a peripheral with an address with no colons throws`() = runTest {
         val manager = newManager(spec())
 
@@ -170,7 +169,6 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("The mock does not validate the Bluetooth address (checkBluetoothAddress leaves the loop early).")
     fun `retrieving a peripheral with non-hexadecimal characters in the address throws`() = runTest {
         val manager = newManager(spec())
 
