@@ -306,6 +306,8 @@ open class MockCentralManagerImpl(
                 (throwable as? ScanningFailedToStartException)?.let {
                     logger?.error(Layer.GAP, it)
                 }
+                // Pass the error to the collector, like the native scanner does.
+                throw throwable
             }
             .onCompletion {
                 logger?.trace(Layer.GAP) { "Scanning stopped" }

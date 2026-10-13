@@ -79,15 +79,16 @@ private val DEFAULT_MOCK_ADVERTISER: MockAdvertiser = { requestedTxPower, _, _ -
 /**
  * A callback used for a mock scanner.
  *
- * This callback is called when the mock central manager requests a scan for Bluetooth LE devices.
+ * This callback is called when the mock central manager starts a scan for Bluetooth LE devices,
+ * which happens each time the flow returned by its `scan` method is collected.
  *
  * Return [Result.success] with `true` to indicate that the scan was successful and that results
  * will be reported, or `false` to start the scan but not report any results.
  * This is useful, as some devices don't report scan error in any way, but just don't report
  * any results.
  *
- * [Result.failure] with `ScanningFailedToStartException` exception will be thrown from the
- * `scan` method of a `CentralManager` as if `ScanCallback.onScanFailed(errorCode)` was called.
+ * [Result.failure] with `ScanningFailedToStartException` exception will be thrown to the collector
+ * of that flow, as if `ScanCallback.onScanFailed(errorCode)` was called.
  */
 typealias MockScanner = () -> Result<Boolean>
 
