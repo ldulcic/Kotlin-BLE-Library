@@ -36,7 +36,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -84,7 +83,7 @@ class GattErrorsTest {
             val fixture = readWriteFixture()
             val characteristic = fixture.characteristic()
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
 
             assertFailsWith<InvalidAttributeException> { characteristic.read() }
         }
@@ -96,7 +95,7 @@ class GattErrorsTest {
             val fixture = readWriteFixture()
             val characteristic = fixture.characteristic()
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
 
             assertFailsWith<InvalidAttributeException> { characteristic.write(byteArrayOf(0x01)) }
             assertFailsWith<InvalidAttributeException> {
@@ -111,7 +110,7 @@ class GattErrorsTest {
             val fixture = readWriteFixture()
             val notifying = fixture.characteristic(GATT_CHAR_2_UUID)
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
 
             assertFailsWith<InvalidAttributeException> { notifying.setNotifying(true) }
             assertFailsWith<InvalidAttributeException> { notifying.subscribe() }
@@ -124,7 +123,7 @@ class GattErrorsTest {
             val fixture = readWriteFixture()
             val descriptor = fixture.descriptor()
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
 
             assertFailsWith<InvalidAttributeException> { descriptor.read() }
             assertFailsWith<InvalidAttributeException> { descriptor.write(byteArrayOf(0x01)) }
@@ -137,7 +136,7 @@ class GattErrorsTest {
             val fixture = readWriteFixture()
             val characteristic = fixture.characteristic()
             fixture.spec.simulateDisconnection()
-            advanceUntilIdle()
+            gattSettle()
 
             assertFailsWith<InvalidAttributeException> { characteristic.read() }
         }
@@ -185,7 +184,7 @@ class GattErrorsTest {
                 }
             }
             val oldCharacteristic = fixture.characteristic()
-            advanceUntilIdle()
+            gattSettle()
 
             fixture.spec.simulateServiceChange {
                 GenericAttributeService()
@@ -193,7 +192,7 @@ class GattErrorsTest {
                     Characteristic(GATT_CHAR_UUID, CharacteristicProperty.READ, Permission.READ)
                 }
             }
-            advanceUntilIdle()
+            gattSettle()
 
             assertFailsWith<InvalidAttributeException> { oldCharacteristic.read() }
         }

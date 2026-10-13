@@ -34,7 +34,6 @@ package no.nordicsemi.kotlin.ble.client.android.mock
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -82,7 +81,7 @@ class GattServiceDiscoveryTest {
 
             fixture.connect()
             peripheral.services().first { it is RemoteServices.Discovered }
-            advanceUntilIdle()
+            gattSettle()
 
             assertEquals(3, states.size, "States: $states")
             assertEquals(RemoteServices.Unknown, states[0])
@@ -373,7 +372,7 @@ class GattServiceDiscoveryTest {
             }
 
             fixture.discover()
-            advanceUntilIdle()
+            gattSettle()
 
             val cccdWrite = handler.descriptorWrites.single { it.first == Descriptor.CLIENT_CHAR_CONF_UUID }
             assertContentEquals(byteArrayOf(0x02, 0x00), cccdWrite.second)
@@ -388,7 +387,7 @@ class GattServiceDiscoveryTest {
                 Service(serviceA)
             }
             val oldServices = fixture.discover()
-            advanceUntilIdle()
+            gattSettle()
 
             fixture.spec.simulateServiceChange {
                 GenericAttributeService()
@@ -418,13 +417,13 @@ class GattServiceDiscoveryTest {
                 Service(serviceA)
             }
             fixture.discover()
-            advanceUntilIdle()
+            gattSettle()
 
             fixture.spec.simulateServiceChange {
                 GenericAttributeService(initiallyEnabled = false)
                 Service(serviceB)
             }
-            advanceUntilIdle()
+            gattSettle()
 
             // The client was not informed, so it keeps what it discovered.
             val state = fixture.peripheral.services().value
@@ -441,7 +440,7 @@ class GattServiceDiscoveryTest {
             val services = fixture.discover()
 
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
 
             assertEquals(RemoteServices.Unknown, fixture.peripheral.services().value)
             assertEquals(null, services.single().owner)
@@ -454,7 +453,7 @@ class GattServiceDiscoveryTest {
             val fixture = gattFixture { Service(serviceA) }
             fixture.discover()
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
             assertEquals(1, fixture.handler.discoveryRequests.size)
 
             val services = fixture.discover()
@@ -474,7 +473,7 @@ class GattServiceDiscoveryTest {
             }
             fixture.discover()
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
 
             // Services change while no client is connected.
             fixture.spec.simulateServiceChange {
@@ -507,7 +506,7 @@ class GattServiceDiscoveryTest {
             assertEquals(RemoteServices.Discovering, services.value)
 
             fixture.spec.simulateDisconnection()
-            advanceUntilIdle()
+            gattSettle()
 
             assertEquals(RemoteServices.Unknown, services.value)
         }

@@ -39,7 +39,6 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -104,7 +103,7 @@ class GattSubscriptionTest {
             collect(fixture.characteristic(), values)
 
             fixture.spec.simulateValueUpdate(handle, byteArrayOf(0x0A, 0x0B, 0x0C))
-            advanceUntilIdle()
+            gattSettle()
 
             assertEquals(1, values.size)
             assertContentEquals(byteArrayOf(0x0A, 0x0B, 0x0C), values.single())
@@ -121,7 +120,7 @@ class GattSubscriptionTest {
             for (i in 0 until 5) {
                 fixture.spec.simulateValueUpdate(handle, byteArrayOf(i.toByte()))
             }
-            advanceUntilIdle()
+            gattSettle()
 
             assertEquals((0..4).map { it.toByte() }, values.map { it.single() })
         }
@@ -137,7 +136,7 @@ class GattSubscriptionTest {
             for (i in 0 until 50) {
                 fixture.spec.simulateValueUpdate(handle, byteArrayOf(i.toByte(), 0x00))
             }
-            advanceUntilIdle()
+            gattSettle()
 
             assertEquals((0 until 50).map { it.toByte() }, values.map { it[0] })
         }
@@ -152,7 +151,7 @@ class GattSubscriptionTest {
 
             // A peripheral cannot send more than MTU - 3 bytes in a single notification.
             fixture.spec.simulateValueUpdate(handle, gattBytes(30))
-            advanceUntilIdle()
+            gattSettle()
 
             assertContentEquals(gattBytes(20), values.single())
         }
@@ -169,7 +168,7 @@ class GattSubscriptionTest {
             collect(second, secondValues)
 
             fixture.spec.simulateValueUpdate(otherHandle, byteArrayOf(0x02))
-            advanceUntilIdle()
+            gattSettle()
 
             assertTrue(firstValues.isEmpty())
             assertContentEquals(byteArrayOf(0x02), secondValues.single())
@@ -188,7 +187,7 @@ class GattSubscriptionTest {
 
             fixture.spec.simulateValueUpdate(handle, byteArrayOf(0x01))
             fixture.spec.simulateValueUpdate(handle, byteArrayOf(0x02))
-            advanceUntilIdle()
+            gattSettle()
 
             assertEquals(listOf<Byte>(1, 2), first.map { it.single() })
             assertEquals(listOf<Byte>(1, 2), second.map { it.single() })
@@ -228,7 +227,7 @@ class GattSubscriptionTest {
             val characteristic = fixture.characteristic()
 
             characteristic.subscribe()
-            advanceUntilIdle()
+            gattSettle()
 
             assertFalse(characteristic.isNotifying.value)
             assertTrue(handler.descriptorWrites.isEmpty())
@@ -283,7 +282,7 @@ class GattSubscriptionTest {
             collect(fixture.characteristic(), values)
 
             fixture.spec.simulateValueUpdate(handle, byteArrayOf(0x09, 0x08))
-            advanceUntilIdle()
+            gattSettle()
 
             assertContentEquals(byteArrayOf(0x09, 0x08), values.single())
         }
@@ -416,7 +415,7 @@ class GattSubscriptionTest {
             }
             enabled.await()
             fixture.spec.simulateValueUpdate(handle, byteArrayOf(0x01))
-            advanceUntilIdle()
+            gattSettle()
 
             fixture.peripheral.disconnect()
 
@@ -445,11 +444,11 @@ class GattSubscriptionTest {
             val fixture = notifyingFixture(handler = handler)
             fixture.characteristic().setNotifying(true)
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
             val cccdWritesBefore = handler.descriptorWrites.size
 
             val characteristic = fixture.characteristic()
-            advanceUntilIdle()
+            gattSettle()
 
             assertFalse(characteristic.isNotifying.value)
             assertEquals(cccdWritesBefore, handler.descriptorWrites.size)
@@ -462,13 +461,13 @@ class GattSubscriptionTest {
             val fixture = notifyingFixture()
             fixture.characteristic().setNotifying(true)
             fixture.peripheral.disconnect()
-            advanceUntilIdle()
+            gattSettle()
 
             val characteristic = fixture.characteristic()
             val values = mutableListOf<ByteArray>()
             collect(characteristic, values)
             fixture.spec.simulateValueUpdate(handle, byteArrayOf(0x33))
-            advanceUntilIdle()
+            gattSettle()
 
             assertContentEquals(byteArrayOf(0x33), values.single())
         }
@@ -481,10 +480,10 @@ class GattSubscriptionTest {
             val characteristic = fixture.characteristic()
 
             fixture.spec.simulateValueUpdate(handle, byteArrayOf(0x01))
-            advanceUntilIdle()
+            gattSettle()
             val values = mutableListOf<ByteArray>()
             collect(characteristic, values)
-            advanceUntilIdle()
+            gattSettle()
 
             assertNull(values.firstOrNull())
             assertNull(withTimeoutOrNull(500.milliseconds) { characteristic.subscribe().first() })

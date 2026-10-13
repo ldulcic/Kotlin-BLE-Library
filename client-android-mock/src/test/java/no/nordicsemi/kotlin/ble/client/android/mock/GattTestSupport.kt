@@ -34,6 +34,9 @@ package no.nordicsemi.kotlin.ble.client.android.mock
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlin.time.Duration.Companion.seconds
 import no.nordicsemi.kotlin.ble.client.RemoteCharacteristic
 import no.nordicsemi.kotlin.ble.client.RemoteDescriptor
 import no.nordicsemi.kotlin.ble.client.RemoteService
@@ -243,3 +246,15 @@ internal fun TestScope.gattSingleCharacteristic(
 
 /** Returns [size] bytes with predictable content. */
 internal fun gattBytes(size: Int, seed: Int = 0): ByteArray = ByteArray(size) { (it + seed).toByte() }
+
+
+/**
+ * Lets the simulation work that is already due run.
+ *
+ * Not `advanceUntilIdle()`: the simulated peripheral keeps advertising for ever, so the scheduler
+ * is never idle and virtual time would run away.
+ */
+internal suspend fun TestScope.gattSettle() {
+    advanceTimeBy(1.seconds)
+    runCurrent()
+}
