@@ -48,6 +48,8 @@ nordicPublishing {
 
 dependencies {
     api(project(":core"))
+
+    testImplementation(libs.kotlin.test)
 }
 
 dokka {
