@@ -156,6 +156,7 @@ internal class GattFixture(
     lateinit var peripheral: Peripheral
 
     /** Connects to the peripheral (or reconnects, using a fresh [Peripheral] instance). */
+    @IgnorableReturnValue
     suspend fun connect(): Peripheral {
         peripheral = manager.getPeripheralById(spec.identifier)!!
         manager.connect(peripheral, CentralManager.ConnectionOptions.Direct())
@@ -209,6 +210,10 @@ internal fun TestScope.gattFixture(
         advertising {
             CompleteLocalName("Gatt")
         }
+        // Note:
+        // The below are NOT THE SAME METHOD with different isBonded value.
+        // The first one makes the device known (scanned before), while the other not.
+        // DO NOT MERGE it into a single call with isBonded = bonded.
         if (bonded) {
             connectable(
                 name = "Gatt",
@@ -251,7 +256,7 @@ internal fun gattBytes(size: Int, seed: Int = 0): ByteArray = ByteArray(size) { 
 /**
  * Lets the simulation work that is already due run.
  *
- * Not `advanceUntilIdle()`: the simulated peripheral keeps advertising for ever, so the scheduler
+ * Not `advanceUntilIdle()`: the simulated peripheral keeps advertising forever, so the scheduler
  * is never idle and virtual time would run away.
  */
 internal suspend fun TestScope.gattSettle() {
