@@ -39,6 +39,7 @@ import no.nordicsemi.kotlin.ble.client.android.mock.internal.MockCentralManagerI
 import no.nordicsemi.kotlin.ble.client.mock.SimulationProvider
 import no.nordicsemi.kotlin.ble.environment.android.mock.LatestApi
 import no.nordicsemi.kotlin.ble.environment.android.mock.MockAndroidEnvironment
+import kotlin.time.Clock
 
 /**
  * Creates a mock implementation of a [CentralManager] that can emulate scanning and connecting
@@ -49,8 +50,11 @@ import no.nordicsemi.kotlin.ble.environment.android.mock.MockAndroidEnvironment
  *
  * @param environment The environment to use for the mock, defaults to the latest supported API.
  * @param scope The coroutine scope.
+ * @param clock The clock used for timestamps of scan results, defaults to the system clock.
+ * Tests using virtual time may pass a clock based on the test scheduler.
  */
 fun CentralManager.Factory.mock(
     environment: MockAndroidEnvironment = LatestApi(),
     scope: CoroutineScope,
-): MockCentralManager = MockCentralManagerImpl(scope, environment)
+    clock: Clock = Clock.System,
+): MockCentralManager = MockCentralManagerImpl(scope, environment, clock)
