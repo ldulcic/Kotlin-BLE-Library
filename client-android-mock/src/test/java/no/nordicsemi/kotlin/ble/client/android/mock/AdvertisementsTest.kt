@@ -106,7 +106,7 @@ class AdvertisementsTest {
     }
 
     @Test
-    fun `a blocked scan collector gets the oldest 64 queued results like the native scanner`() = runTest {
+    fun `a blocked scan collector gets the newest 64 queued results like the native scanner`() = runTest {
         val manager = CentralManager.mock(scope = backgroundScope)
 
         // The collector is stuck on its first result until the gate opens.
@@ -140,9 +140,9 @@ class AdvertisementsTest {
         gate.complete(Unit)
         runCurrent()
 
-        // Like with the native scanner, the collector gets its first result and the 64 queued
-        // ones (the default buffer of channelFlow). Results arriving after that were lost.
-        assertEquals(addresses.take(1 + 64), received)
+        // Like with the native scanner, the collector gets its first result and the newest 64
+        // queued ones. The older results that didn't fit in the queue were lost.
+        assertEquals(listOf(addresses.first()) + addresses.takeLast(64), received)
     }
 
     @Test
