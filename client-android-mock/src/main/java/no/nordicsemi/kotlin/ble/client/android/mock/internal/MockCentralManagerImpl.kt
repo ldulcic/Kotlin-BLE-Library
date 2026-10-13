@@ -104,6 +104,7 @@ open class MockCentralManagerImpl(
                         name = it.name,
                         environment = environment,
                         advertisements = mockAdvertiser.events,
+                        scope = scope,
                     )
                 )
             }
@@ -142,6 +143,7 @@ open class MockCentralManagerImpl(
                         name = null,
                         environment = environment,
                         advertisements = mockAdvertiser.events,
+                        scope = scope,
                     ).also { p -> p.logger = logger }
                 )
             }
@@ -279,6 +281,7 @@ open class MockCentralManagerImpl(
                                     name = name,
                                     environment = environment,
                                     advertisements = mockAdvertiser.events,
+                                    scope = scope,
                                 )
                             ).also { p -> p.logger = logger }
                         }

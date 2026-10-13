@@ -31,6 +31,7 @@
 
 package no.nordicsemi.kotlin.ble.client.mock.internal
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import no.nordicsemi.kotlin.ble.client.GattEvent
@@ -53,6 +54,7 @@ import kotlin.uuid.Uuid
  * when it was connected / bonded before.
  * @param environment The mock environment.
  * @param advertisements A flow of advertisements emitted by the mock advertiser.
+ * @param scope The scope of the mock central manager, in which the connection runs its jobs.
  * @hide
  */
 open class MockExecutor(
@@ -60,6 +62,7 @@ open class MockExecutor(
     name: String?,
     override val environment: MockEnvironment,
     private val advertisements: Flow<MockScanResult<String>>,
+    private val scope: CoroutineScope,
 ): Peripheral.Executor<String> {
     override var logger: Log.Sink<Layer>? = Log.Sink.Null
     override val initialState: ConnectionState = ConnectionState.Disconnected()
@@ -93,7 +96,7 @@ open class MockExecutor(
         autoMtu: Boolean,
         opportunistic: Boolean,
     ) {
-        gatt = peripheralSpec.connectGatt(environment, autoConnect, autoMtu, opportunistic, advertisements)
+        gatt = peripheralSpec.connectGatt(environment, autoConnect, autoMtu, opportunistic, advertisements, scope)
     }
 
     override suspend fun discoverServices(uuids: List<Uuid>): Boolean {

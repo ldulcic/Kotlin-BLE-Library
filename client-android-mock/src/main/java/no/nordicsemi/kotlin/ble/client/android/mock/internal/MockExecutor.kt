@@ -31,6 +31,7 @@
 
 package no.nordicsemi.kotlin.ble.client.android.mock.internal
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,13 +60,15 @@ import kotlin.time.Duration.Companion.seconds
  * when it was connected / bonded before.
  * @param environment The mock environment.
  * @param advertisements A flow of advertisements emitted by the mock advertiser.
+ * @param scope The scope of the mock central manager, in which the connection runs its jobs.
  */
 open class MockExecutor(
     peripheralSpec: PeripheralSpec<String>,
     name: String?,
     override val environment: MockAndroidEnvironment,
     advertisements: Flow<MockScanResult<String>>,
-): MockExecutor(peripheralSpec, name, environment, advertisements), Peripheral.Executor {
+    scope: CoroutineScope,
+): MockExecutor(peripheralSpec, name, environment, advertisements, scope), Peripheral.Executor {
     override val type: PeripheralType = peripheralSpec.type
 
     /** The current bond state. */

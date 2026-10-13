@@ -31,19 +31,16 @@
 
 package no.nordicsemi.kotlin.ble.client.android.mock
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import no.nordicsemi.kotlin.ble.client.RemoteCharacteristic
@@ -62,7 +59,6 @@ import no.nordicsemi.kotlin.ble.core.CharacteristicProperty
 import no.nordicsemi.kotlin.ble.core.OperationStatus
 import no.nordicsemi.kotlin.ble.core.Permission
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
-import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -83,7 +79,6 @@ class NotificationsTest {
     private val includedCharacteristicUuid = Uuid.random()
     private val value = byteArrayOf(0x01, 0x02, 0x03)
 
-    private lateinit var scope: CoroutineScope
     private lateinit var peripheralSpec: PeripheralSpec<String>
     private lateinit var peripheral: Peripheral
     private var handle: Int = -1
@@ -118,7 +113,6 @@ class NotificationsTest {
 
     @BeforeTest
     fun setUp() {
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         cccdWrites = 0
         isNotifyingOnCccdWrite = null
         cccdWriteResponse = WriteResponse.Success
@@ -155,16 +149,11 @@ class NotificationsTest {
         }
     }
 
-    @AfterTest
-    fun tearDown() {
-        scope.cancel()
-    }
-
     /**
      * Connects to the mock peripheral and returns the discovered services.
      */
-    private suspend fun connect(): List<RemoteService> {
-        val centralManager = CentralManager.mock(scope = scope)
+    private suspend fun TestScope.connect(): List<RemoteService> {
+        val centralManager = CentralManager.mock(scope = backgroundScope)
             .apply { simulatePeripherals(listOf(peripheralSpec)) }
         peripheral = centralManager.getPeripheralById(peripheralSpec.identifier)!!
         centralManager.connect(peripheral, CentralManager.ConnectionOptions.Direct())
@@ -175,7 +164,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun `notification sent immediately after enabling is received`() = runBlocking {
+    fun `notification sent immediately after enabling is received`() = runTest {
         withTimeout(10.seconds) {
             val characteristic = connect()
                 .first { it.uuid == serviceUuid }
@@ -194,7 +183,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun `notification sent immediately after re-enabling reaches active subscriber`() = runBlocking {
+    fun `notification sent immediately after re-enabling reaches active subscriber`() = runTest {
         withTimeout(10.seconds) {
             val characteristic = connect()
                 .first { it.uuid == serviceUuid }
@@ -219,7 +208,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun `active subscriber receives no values after disabling`() = runBlocking {
+    fun `active subscriber receives no values after disabling`() = runTest {
         withTimeout(10.seconds) {
             val characteristic = connect()
                 .first { it.uuid == serviceUuid }
@@ -246,7 +235,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun `rejected CCCD write does not enable notifications`() = runBlocking {
+    fun `rejected CCCD write does not enable notifications`() = runTest {
         withTimeout(10.seconds) {
             val characteristic = connect()
                 .first { it.uuid == serviceUuid }
@@ -278,7 +267,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun `setNotifying during Reliable Write enables notifications immediately`() = runBlocking {
+    fun `setNotifying during Reliable Write enables notifications immediately`() = runTest {
         withTimeout(10.seconds) {
             val characteristic = connect()
                 .first { it.uuid == serviceUuid }
@@ -300,7 +289,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun `Long Write to a descriptor completes`() = runBlocking {
+    fun `Long Write to a descriptor completes`() = runTest {
         withTimeout(10.seconds) {
             val descriptor = connect()
                 .first { it.uuid == serviceUuid }
@@ -317,7 +306,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun `notifications in included service are reset on disconnection`() = runBlocking {
+    fun `notifications in included service are reset on disconnection`() = runTest {
         withTimeout(10.seconds) {
             val characteristic = connect()
                 .first { it.uuid == serviceUuid }
@@ -340,7 +329,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun `concurrent setNotifying writes CCCD once`() = runBlocking {
+    fun `concurrent setNotifying writes CCCD once`() = runTest {
         withTimeout(10.seconds) {
             val characteristic = connect()
                 .first { it.uuid == serviceUuid }
