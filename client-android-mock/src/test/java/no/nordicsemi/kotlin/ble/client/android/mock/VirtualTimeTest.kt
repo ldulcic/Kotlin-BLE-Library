@@ -273,4 +273,43 @@ class VirtualTimeTest {
         runCurrent()
         assertContains(services.serviceUuids(), NEW_SERVICE)
     }
+
+    @Test
+    fun `pending link loss reaches older manager when the newest manager's scope is cancelled`() = runTest {
+        val spec = connectableSpec(advertiseWhenConnected = true)
+        val manager = CentralManager.mock(scope = backgroundScope)
+        val otherScope = otherScope()
+        val otherManager = CentralManager.mock(scope = otherScope)
+        manager.simulatePeripherals(listOf(spec))
+        otherManager.simulatePeripherals(listOf(spec))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+
+        // The link loss is scheduled in the newest manager, which goes away before it happens.
+        spec.simulateProximityChange(Proximity.OUT_OF_RANGE)
+        advanceTimeBy(1.seconds)
+        otherScope.cancel()
+
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+    }
+
+    @Test
+    fun `pending link loss reaches older manager when the newest manager is torn down`() = runTest {
+        val spec = connectableSpec()
+        val manager = CentralManager.mock(scope = backgroundScope)
+        val otherManager = CentralManager.mock(scope = otherScope())
+        manager.simulatePeripherals(listOf(spec))
+        otherManager.simulatePeripherals(listOf(spec))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+
+        spec.simulateReset()
+        otherManager.tearDownSimulation()
+
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+    }
 }

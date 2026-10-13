@@ -47,7 +47,7 @@ import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import no.nordicsemi.kotlin.ble.client.CentralManager
 import no.nordicsemi.kotlin.ble.client.ConnectionParametersChanged
@@ -87,7 +87,6 @@ import no.nordicsemi.kotlin.ble.core.mock.AdvertisingDataScope
 import no.nordicsemi.kotlin.ble.core.mock.MockEnvironment
 import no.nordicsemi.kotlin.ble.core.mock.internal.AdvertisingDataScopeImpl
 import org.jetbrains.annotations.Range
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.time.Duration
@@ -152,32 +151,51 @@ class PeripheralSpec<ID: Any> private constructor(
     private val _events: MutableSharedFlow<GattEvent> = MutableSharedFlow(extraBufferCapacity = 64)
     val events: SharedFlow<GattEvent> = _events.asSharedFlow()
 
+    /** Guards [simulations] and [sharedJob]. */
+    private val lock = Any()
+
     /**
-     * Scopes of the mock central managers simulating this peripheral, oldest first.
+     * Simulation scopes of the mock central managers simulating this peripheral, oldest first.
      *
      * @see attach
      */
-    private val simulationScopes = AtomicReference<List<CoroutineScope>>(emptyList())
+    private val simulations = mutableListOf<CoroutineScope>()
+
+    /**
+     * The parent of all work shared by the clients, see [launchShared].
+     *
+     * It belongs to the peripheral, not to any manager, and is cancelled when the last manager
+     * stops simulating the peripheral.
+     */
+    private var sharedJob: Job? = null
 
     /** The scope used when the peripheral is not simulated by any mock central manager. */
     private val fallbackScope by lazy { CoroutineScope(Dispatchers.IO) }
 
     /**
-     * The scope in which the simulation work of this peripheral runs, i.e. delayed events
-     * received by all connected clients, like link loss, notifications or MTU changes.
+     * Launches work of the peripheral that is shared by all connected clients, i.e. delayed
+     * events like link loss, notifications or MTU changes.
      *
-     * This is the scope of the mock central manager that started simulating this peripheral
-     * most recently and is still active, so that the simulation follows the dispatcher and
-     * the clock given to that manager, e.g. a test scheduler. Managers simulating the same
-     * peripheral should use the same clock, e.g. one test scheduler.
+     * The work runs with the dispatcher, the clock and the exception handler of the mock central
+     * manager that started simulating this peripheral most recently, so that it follows e.g.
+     * a test scheduler. It is not a child of that manager's scope, though: it survives when that
+     * manager's scope is cancelled or its simulation is torn down, as long as at least one other
+     * manager still simulates the peripheral. It is cancelled when the last one stops.
      *
-     * Work keeps the scope it was started in: if that manager's scope is cancelled or its
-     * simulation is torn down, its pending work is cancelled, also for other managers connected
-     * to this peripheral, and new work runs in the scope of the next active manager. Work of
-     * a single connection runs in the scope of the manager that created it instead, see [Api].
+     * Managers simulating the same peripheral should use the same clock, e.g. one test scheduler.
+     *
+     * Work of a single connection runs in the scope of the manager that created it instead,
+     * see [Api].
      */
-    private val scope: CoroutineScope
-        get() = simulationScopes.get().lastOrNull { it.isActive } ?: fallbackScope
+    private fun launchShared(block: suspend CoroutineScope.() -> Unit) {
+        val context = synchronized(lock) {
+            val newest = simulations.lastOrNull() ?: return@synchronized null
+            val job = sharedJob ?: SupervisorJob().also { sharedJob = it }
+            newest.coroutineContext.minusKey(Job) + job
+        }
+        if (context != null) CoroutineScope(context).launch(block = block)
+        else fallbackScope.launch(block = block)
+    }
 
     /**
      * Starts simulating this peripheral in the scope of a mock central manager.
@@ -186,24 +204,36 @@ class PeripheralSpec<ID: Any> private constructor(
      * doesn't cancel the rest of the simulation or the manager's scope. It is reported to the
      * exception handler of the manager's scope instead, which e.g. fails a test using `runTest`.
      *
+     * The simulation ends when the returned scope is cancelled, either by [detach] or together
+     * with the manager's scope.
+     *
      * @param parent The scope of the mock central manager.
      * @return The scope of the simulation. Pass it to [detach] to stop the simulation.
      */
     internal fun attach(parent: CoroutineScope): CoroutineScope =
         CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
             .also { simulation ->
-                // Scopes of managers that have been closed in the meantime are dropped here.
-                simulationScopes.updateAndGet { scopes -> scopes.filter { it.isActive } + simulation }
+                synchronized(lock) { simulations += simulation }
+                simulation.coroutineContext.job.invokeOnCompletion { release(simulation) }
             }
 
     /**
      * Stops the simulation started with [attach], canceling all work started in its scope.
      *
+     * Work shared by the clients keeps running as long as another manager simulates the peripheral.
+     *
      * @param simulation The scope returned by [attach].
      */
     internal fun detach(simulation: CoroutineScope) {
         simulation.cancel()
-        simulationScopes.updateAndGet { scopes -> scopes - simulation }
+    }
+
+    private fun release(simulation: CoroutineScope) = synchronized(lock) {
+        simulations -= simulation
+        if (simulations.isEmpty()) {
+            sharedJob?.cancel()
+            sharedJob = null
+        }
     }
 
     /** The peripheral identifier. */
@@ -222,7 +252,7 @@ class PeripheralSpec<ID: Any> private constructor(
             if (field == Proximity.OUT_OF_RANGE && isConnected) {
                 val supervisionTimeout = connectionParameters!!.supervisionTimeoutMillis.milliseconds
 
-                scope.launch {
+                launchShared {
                     // Simulate supervision timeout delay before notifying disconnection.
                     delay(supervisionTimeout)
 
@@ -606,7 +636,7 @@ class PeripheralSpec<ID: Any> private constructor(
 
         // If the device was connected, notify about disconnection due to link loss.
         if (supervisionTimeout != null) {
-            scope.launch {
+            launchShared {
                 // Simulate supervision timeout delay before notifying clients.
                 delay(supervisionTimeout)
                 _events.emit(ConnectionStateChanged(ConnectionState.Disconnected(Reason.LinkLoss)))
@@ -629,7 +659,7 @@ class PeripheralSpec<ID: Any> private constructor(
         if (!isConnected) return
 
         // Notify clients that the value has changed.
-        scope.launch {
+        launchShared {
             val transferDuration = estimateTransferDuration(value, isWrite = true, withResponse = false)
             delay(transferDuration)
 
@@ -664,7 +694,7 @@ class PeripheralSpec<ID: Any> private constructor(
             ?.descriptors
             ?.firstOrNull { it.uuid == Descriptor.CLIENT_CHAR_CONF_UUID } as? CCCD
         if (serviceChangedCharacteristicCccd?.enabled == true) {
-            scope.launch {
+            launchShared {
                 // Simulate delay for sending indication.
                 delay(connectionInterval)
 
@@ -720,7 +750,7 @@ class PeripheralSpec<ID: Any> private constructor(
     fun simulateConnectionParametersRequest(parameters: ConnectionParameters.Specified, delay: Int = 5) {
         // TODO Validate parameters against preferred / possible parameters?
         connectionParameters?.connectionIntervalMillis?.let { connectionInterval ->
-            scope.launch {
+            launchShared {
                 // Wait for few (old) connection intervals before applying new parameters.
                 delay(connectionInterval.milliseconds * delay)
 
@@ -757,7 +787,7 @@ class PeripheralSpec<ID: Any> private constructor(
 
         // Wait for few connection intervals before applying new parameters.
         val connectionInterval = checkNotNull(connectionParameters).connectionIntervalMillis.milliseconds
-        scope.launch {
+        launchShared {
             delay(connectionInterval * 2)
 
             this@PeripheralSpec.mtu = newMtu
