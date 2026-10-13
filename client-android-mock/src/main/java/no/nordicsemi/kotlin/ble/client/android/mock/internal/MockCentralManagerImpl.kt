@@ -32,10 +32,12 @@
 package no.nordicsemi.kotlin.ble.client.android.mock.internal
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.withTimeoutOrNull
 import no.nordicsemi.kotlin.ble.client.MonitoringEvent
@@ -208,7 +210,7 @@ open class MockCentralManagerImpl(
             "Starting scanning with ${filters?.let { "filters: $it" } ?: "no filters"}"
         }
 
-        return flow {
+        return channelFlow {
             val reportResult = environment.scanner().getOrThrow()
 
             // Emit all scan results until the timeout.
@@ -290,17 +292,24 @@ open class MockCentralManagerImpl(
                     // Apply the filters if set.
                     if (filters?.match(scanResult) == false) return@collect
 
-                    emit(scanResult)
+                    // Like the native scanner, results are sent without waiting for the collector.
+                    // A slow collector gets the newest 64 queued results, see buffer() below.
+                    trySend(scanResult)
                 }
             }
             logger?.trace(Layer.GAP) { "Scanning timed out after $timeout" }
-        }.catch { throwable ->
-            (throwable as? ScanningFailedToStartException)?.let {
-                logger?.error(Layer.GAP, it)
-            }
-        }.onCompletion {
-            logger?.trace(Layer.GAP) { "Scanning stopped" }
         }
+            // Like the native scanner, keep the newest 64 results if the collector falls behind.
+            // This must be applied right after channelFlow, so that it sets the channel capacity.
+            .buffer(64, BufferOverflow.DROP_OLDEST)
+            .catch { throwable ->
+                (throwable as? ScanningFailedToStartException)?.let {
+                    logger?.error(Layer.GAP, it)
+                }
+            }
+            .onCompletion {
+                logger?.trace(Layer.GAP) { "Scanning stopped" }
+            }
     }
 
     override fun monitor(
