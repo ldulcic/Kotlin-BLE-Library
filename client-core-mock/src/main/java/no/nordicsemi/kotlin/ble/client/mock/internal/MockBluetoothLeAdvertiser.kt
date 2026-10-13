@@ -43,7 +43,9 @@ import no.nordicsemi.kotlin.ble.client.mock.Proximity
 import no.nordicsemi.kotlin.ble.core.Bluetooth5AdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.Environment
+import kotlin.random.Random
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * A mock advertiser emitting advertising events of simulated peripherals.
@@ -73,7 +75,7 @@ class MockBluetoothLeAdvertiser<ID: Any>(
     fun simulateAdvertising(peripherals: List<PeripheralSpec<ID>>) {
         peripherals.forEach { peripheralSpec ->
             // If a peripheral has defined advertising data, begin mock advertising.
-            peripheralSpec.advertisingSets?.forEach { advertisingSet ->
+            peripheralSpec.advertisingSets?.forEachIndexed { index, advertisingSet ->
                 // Build the advertising parameters. We do this here once, as it doesn't change over time.
                 val rawAdvertisingData = advertisingSet.advertisingData.raw
                 val bluetooth5AdvertisingSetParameters =
@@ -93,6 +95,14 @@ class MockBluetoothLeAdvertiser<ID: Any>(
                 val job = scope.launch {
                     // First, delay the advertising if needed.
                     delay(advertisingSet.delay)
+
+                    // On real devices, the time between advertising events is the interval plus
+                    // a random 0-10 ms (advDelay). See Bluetooth Core Specification v6.2, Vol 6,
+                    // Part B, Section 4.4.2.2.1 Advertising interval:
+                    // https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/low-energy-controller/link-layer-specification.html#UUID-485d8ae5-fba9-7177-831b-a5d4a8362f33
+                    // The seed is fixed, so tests are reproducible, and differs per device and
+                    // advertising set, so they drift apart like real ones.
+                    val advDelays = Random(31 * peripheralSpec.identifier.hashCode() + index)
 
                     // Set up the timer to cancel advertising after the timeout.
                     // The default timeout is set to INFINITE.
@@ -121,7 +131,7 @@ class MockBluetoothLeAdvertiser<ID: Any>(
                             }
 
                             // Wait the advertising interval for the next advertising event.
-                            delay(advertisingSet.parameters.interval)
+                            delay(advertisingSet.parameters.interval + advDelays.nextInt(0, 11).milliseconds)
                         }
                     }
                 }
