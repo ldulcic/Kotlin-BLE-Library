@@ -5,6 +5,7 @@ import no.nordicsemi.kotlin.ble.core.ConnectionParameters
 import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.PeripheralType
 import no.nordicsemi.kotlin.ble.core.Phy
+import no.nordicsemi.kotlin.ble.core.PhyInUse
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import kotlin.test.Test
 import kotlin.test.Ignore
@@ -388,7 +389,7 @@ class PeripheralSpecBuilderTest {
     fun `simulated connection uses 1M PHY when requested PHY is not supported`() {
         val spec = connectableSpec()
         spec.simulateConnection(phy = PrimaryPhy.PHY_LE_CODED)
-        assertEquals(Phy.PHY_LE_1M, spec.phy)
+        assertEquals(PhyInUse.PHY_LE_1M, spec.phy)
     }
 
     @Test
@@ -397,7 +398,7 @@ class PeripheralSpecBuilderTest {
             connectable(name = "Coded", isPhyCodedSupported = true, eventHandler = handler, services = { })
         }
         spec.simulateConnection(phy = PrimaryPhy.PHY_LE_CODED)
-        assertEquals(Phy.PHY_LE_CODED, spec.phy)
+        assertEquals(PhyInUse(Phy.PHY_LE_CODED, Phy.PHY_LE_CODED), spec.phy)
     }
 
     @Test
@@ -423,5 +424,107 @@ class PeripheralSpecBuilderTest {
         val spec = connectableSpec()
         spec.simulateProximityChange(Proximity.FAR)
         assertEquals(Proximity.FAR, spec.proximity)
+    }
+
+    // connected(activePhy)
+
+    @Test
+    fun `connected peripheral uses the active PHY of the connection`() {
+        val spec = PeripheralSpec.simulatePeripheral("id") {
+            connected(
+                name = "Device",
+                isPhyLe2MSupported = true,
+                activePhy = PhyInUse(Phy.PHY_LE_2M, Phy.PHY_LE_2M),
+                eventHandler = handler,
+                cachedServices = { },
+            )
+        }
+        assertTrue(spec.isConnected)
+        assertEquals(PhyInUse(Phy.PHY_LE_2M, Phy.PHY_LE_2M), spec.phy)
+    }
+
+    @Test
+    fun `connected peripheral uses LE 1M by default`() {
+        val spec = PeripheralSpec.simulatePeripheral("id") {
+            connected(name = "Device", eventHandler = handler, cachedServices = { })
+        }
+        assertEquals(PhyInUse.PHY_LE_1M, spec.phy)
+    }
+
+    @Test
+    fun `connected peripheral can use different TX and RX PHYs`() {
+        val spec = PeripheralSpec.simulatePeripheral("id") {
+            connected(
+                name = "Device",
+                isPhyLe2MSupported = true,
+                activePhy = PhyInUse(txPhy = Phy.PHY_LE_2M, rxPhy = Phy.PHY_LE_1M),
+                eventHandler = handler,
+                cachedServices = { },
+            )
+        }
+        assertEquals(PhyInUse(Phy.PHY_LE_2M, Phy.PHY_LE_1M), spec.phy)
+    }
+
+    @Test
+    fun `connected peripheral has the default state of a new connection`() {
+        val spec = PeripheralSpec.simulatePeripheral("id") {
+            connected(name = "Device", eventHandler = handler, cachedServices = { })
+        }
+        assertEquals(23, spec.mtu)
+        assertEquals(27, spec.llMtu)
+        assertNotNull(spec.connectionParameters)
+    }
+
+    @Test
+    fun `active PHY not supported by the peripheral is rejected`() {
+        assertFailsWith<IllegalArgumentException> {
+            PeripheralSpec.simulatePeripheral("id") {
+                connected(
+                    name = "Device",
+                    activePhy = PhyInUse(Phy.PHY_LE_2M, Phy.PHY_LE_2M),
+                    eventHandler = handler,
+                    cachedServices = { },
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `active PHY is rejected when only the RX PHY is not supported`() {
+        assertFailsWith<IllegalArgumentException> {
+            PeripheralSpec.simulatePeripheral("id") {
+                connected(
+                    name = "Device",
+                    isPhyLe2MSupported = true,
+                    activePhy = PhyInUse(txPhy = Phy.PHY_LE_2M, rxPhy = Phy.PHY_LE_CODED),
+                    eventHandler = handler,
+                    cachedServices = { },
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `active PHY is validated also when the peripheral is out of range`() {
+        assertFailsWith<IllegalArgumentException> {
+            PeripheralSpec.simulatePeripheral("id", proximity = Proximity.OUT_OF_RANGE) {
+                connected(
+                    name = "Device",
+                    activePhy = PhyInUse(Phy.PHY_LE_CODED, Phy.PHY_LE_CODED),
+                    eventHandler = handler,
+                    cachedServices = { },
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `peripheral that is out of range is not connected`() {
+        val spec = PeripheralSpec.simulatePeripheral("id", proximity = Proximity.OUT_OF_RANGE) {
+            connected(name = "Device", eventHandler = handler, cachedServices = { })
+        }
+        assertFalse(spec.isConnected)
+        assertNull(spec.phy)
+        assertNull(spec.mtu)
     }
 }
