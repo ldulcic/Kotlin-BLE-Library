@@ -50,8 +50,10 @@ import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpecEventHandler
 import no.nordicsemi.kotlin.ble.core.ConnectionState
 import no.nordicsemi.kotlin.ble.core.ConnectionState.Disconnected.Reason
 import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
+import no.nordicsemi.kotlin.ble.core.Phy
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.exception.ManagerClosedException
+import org.jetbrains.annotations.Range
 import kotlin.test.Test
 import kotlin.test.Ignore
 import kotlin.test.assertEquals
@@ -90,23 +92,53 @@ class ConnectionManagerLifecycleTest {
         }
     }
 
+    /** Creates a spec of a device that is already connected to another application. */
     private fun spec(
         address: String = ADDRESS,
+        maxAttMtu: @Range(from = 23, to = 517) Int = 23,
+        isPhyLe2MSupported: Boolean = true,
+        isPhyCodedSupported: Boolean = true,
         events: Events = Events(),
-        advertising: Boolean = true,
-    ): PeripheralSpec<String> = PeripheralSpec.simulatePeripheral(
-        identifier = address,
-        addressType = AddressType.PUBLIC,
-    ) {
-        connectable(name = "Device", eventHandler = events) {}
-        if (advertising) {
+    ): PeripheralSpec<String> = PeripheralSpec
+        .simulatePeripheral(
+            identifier = address,
+            addressType = AddressType.PUBLIC,
+        ) {
+            connectable(
+                name = "Device",
+                maxAttMtu = maxAttMtu,
+                isPhyLe2MSupported = isPhyLe2MSupported,
+                isPhyCodedSupported = isPhyCodedSupported,
+                eventHandler = events
+            ) {}
             advertising(
                 parameters = LegacyAdvertisingSetParameters(connectable = true, interval = 100.milliseconds),
             ) {
                 CompleteLocalName("Device")
             }
         }
-    }
+
+    /** Creates a spec of a device that is already connected to another application. */
+    private fun initiallyConnectedSpec(
+        address: String = ADDRESS,
+        maxAttMtu: @Range(from = 23, to = 517) Int = 23,
+        isPhyLe2MSupported: Boolean = true,
+        isPhyCodedSupported: Boolean = true,
+        events: Events = Events(),
+    ): PeripheralSpec<String> = PeripheralSpec
+        .simulatePeripheral(
+            identifier = address,
+            addressType = AddressType.PUBLIC
+        ) {
+            connected(
+                name = "Device",
+                maxAttMtu = maxAttMtu,
+                isPhyLe2MSupported = isPhyLe2MSupported,
+                isPhyCodedSupported = isPhyCodedSupported,
+                eventHandler = events,
+                cachedServices = {}
+            )
+        }
 
     private fun TestScope.newManager(vararg specs: PeripheralSpec<String>): MockCentralManager =
         CentralManager.mock(scope = backgroundScope).apply { simulatePeripherals(specs.toList()) }
@@ -128,7 +160,6 @@ class ConnectionManagerLifecycleTest {
     @Test
     fun `peripherals retrieved by ids are returned in the requested order`() = runTest {
         val manager = newManager(spec(ADDRESS), spec(OTHER_ADDRESS))
-
         val peripherals = manager.getPeripheralsById(listOf(OTHER_ADDRESS, ADDRESS))
 
         assertEquals(listOf(OTHER_ADDRESS, ADDRESS), peripherals.map { it.address })
@@ -137,7 +168,6 @@ class ConnectionManagerLifecycleTest {
     @Test
     fun `peripheral that is not simulated can be retrieved by its address`() = runTest {
         val manager = newManager(spec())
-
         val peripheral = manager.getPeripheralById(UNKNOWN_ADDRESS)
 
         assertNotNull(peripheral)
@@ -262,7 +292,6 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("Needs triage: connection counting with several managers / other applications.")
     fun `device stays connected until all managers disconnect`() = runTest {
         val events = Events()
         val spec = spec(events = events)
@@ -281,7 +310,6 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("Needs triage: disconnect throws 'Peripheral not connected.' for shared connections.")
     fun `device is disconnected after the last manager disconnects`() = runTest {
         val events = Events()
         val spec = spec(events = events)
@@ -340,7 +368,6 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("Needs triage: connection counting with several managers / other applications.")
     fun `device stays connected to another application after the client disconnects`() = runTest {
         val events = Events()
         val spec = spec(events = events)
@@ -360,7 +387,7 @@ class ConnectionManagerLifecycleTest {
     fun `connection from another application denied by the device is not established`() = runTest {
         val events = Events().apply { result = ConnectionResult.Deny }
         val spec = spec(events = events)
-        newManager(spec)
+        val _ = newManager(spec)
 
         spec.simulateConnection()
 
@@ -383,13 +410,8 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("Needs triage: specs created with connected() have no MTU / connection parameters, so connect fails.")
     fun `connection can be made to a device that was initially connected`() = runTest {
-        val events = Events()
-        val spec = PeripheralSpec.simulatePeripheral(identifier = ADDRESS, addressType = AddressType.PUBLIC) {
-            connected(name = "Device", eventHandler = events, cachedServices = {})
-        }
-        val manager = newManager(spec)
+        val manager = newManager(initiallyConnectedSpec())
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
 
         manager.connect(peripheral, ConnectionOptions.Direct(timeout = 5.seconds))
@@ -398,11 +420,71 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
+    fun `mtu of a device that was initially connected is the one of the connection`() = runTest {
+        val mtu = 64
+        val spec = initiallyConnectedSpec(maxAttMtu = mtu)
+        val manager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        manager.connect(peripheral, ConnectionOptions.Direct(timeout = 5.seconds))
+        // mtu is a StateFlow derived from events, it is updated after connect() returns.
+        runCurrent()
+
+        assertEquals(mtu, spec.mtu)
+        assertEquals(mtu, peripheral.mtu.value)
+    }
+
+    @Test
+    fun `phy of a device that was initially connected is the one of the connection`() = runTest {
+        val spec = initiallyConnectedSpec()
+        val manager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        manager.connect(peripheral, ConnectionOptions.Direct(timeout = 5.seconds))
+        // phy is a StateFlow derived from events, it is updated after connect() returns.
+        runCurrent()
+
+        assertEquals(spec.phy, peripheral.phy.value?.txPhy)
+        assertEquals(spec.phy, peripheral.phy.value?.rxPhy)
+    }
+
+    @Test
+    fun `mtu of a device connected by another application is the one of that connection`() = runTest {
+        val mtu = 185
+        val spec = initiallyConnectedSpec(maxAttMtu = mtu)
+        val manager = newManager(spec)
+        spec.simulateConnection(mtu = mtu)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        manager.connect(peripheral, ConnectionOptions.Direct(timeout = 5.seconds))
+        // mtu is a StateFlow derived from events, it is updated after connect() returns.
+        runCurrent()
+
+        // MTU is exchanged once per connection, so the client gets the value negotiated before.
+        assertEquals(mtu, spec.mtu)
+        assertEquals(mtu, peripheral.mtu.value)
+    }
+
+    @Test
+    fun `phy of a device connected by another application is the one of that connection`() = runTest {
+        val spec = spec()// initiallyConnectedSpec()
+        val manager = newManager(spec)
+        spec.simulateConnection(phy = PrimaryPhy.PHY_LE_CODED)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        manager.connect(peripheral, ConnectionOptions.Direct(timeout = 5.seconds))
+        // phy is a StateFlow derived from events, it is updated after connect() returns.
+        runCurrent()
+
+        assertEquals(Phy.PHY_LE_CODED, spec.phy)
+        assertEquals(Phy.PHY_LE_CODED, peripheral.phy.value?.txPhy)
+        assertEquals(Phy.PHY_LE_CODED, peripheral.phy.value?.rxPhy)
+    }
+
+    @Test
     fun `device that was initially connected is not asked for the connection`() = runTest {
         val events = Events()
-        val spec = PeripheralSpec.simulatePeripheral(identifier = ADDRESS, addressType = AddressType.PUBLIC) {
-            connected(name = "Device", eventHandler = events, cachedServices = {})
-        }
+        val spec = initiallyConnectedSpec(events = events)
         val manager = newManager(spec)
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
 
