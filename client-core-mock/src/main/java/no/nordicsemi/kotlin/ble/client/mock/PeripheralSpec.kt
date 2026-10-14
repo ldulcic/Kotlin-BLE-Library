@@ -64,6 +64,7 @@ import no.nordicsemi.kotlin.ble.client.internal.CharacteristicChanged
 import no.nordicsemi.kotlin.ble.client.mock.internal.MockRemoteService
 import no.nordicsemi.kotlin.ble.client.mock.internal.MockScanResult
 import no.nordicsemi.kotlin.ble.core.ATT_MTU_DEFAULT
+import no.nordicsemi.kotlin.ble.core.ATT_MTU_MAX
 import no.nordicsemi.kotlin.ble.core.AdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.Bluetooth5AdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.Characteristic
@@ -72,6 +73,7 @@ import no.nordicsemi.kotlin.ble.core.ConnectionState
 import no.nordicsemi.kotlin.ble.core.ConnectionState.Disconnected.Reason
 import no.nordicsemi.kotlin.ble.core.Descriptor
 import no.nordicsemi.kotlin.ble.core.LL_MTU_DEFAULT
+import no.nordicsemi.kotlin.ble.core.LL_MTU_MAX
 import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.OperationStatus
 import no.nordicsemi.kotlin.ble.core.PeripheralType
@@ -170,6 +172,15 @@ class PeripheralSpec<ID: Any> private constructor(
      */
     private var sharedJob: Job? = null
 
+    /**
+     * The environment of the mock central manager simulating this peripheral, or `null` if it is
+     * not known yet.
+     *
+     * A peripheral is simulated in one environment. It limits the MTU and the PHYs of connections
+     * to what both the phone and the peripheral support.
+     */
+    private var simulationEnvironment: MockEnvironment? = null
+
     /** The scope used when the peripheral is not simulated by any mock central manager. */
     private val fallbackScope by lazy { CoroutineScope(Dispatchers.IO) }
 
@@ -209,11 +220,15 @@ class PeripheralSpec<ID: Any> private constructor(
      * with the manager's scope.
      *
      * @param parent The scope of the mock central manager.
+     * @param environment The environment of the mock central manager, if known.
      * @return The scope of the simulation. Pass it to [detach] to stop the simulation.
      */
-    internal fun attach(parent: CoroutineScope): CoroutineScope =
+    internal fun attach(parent: CoroutineScope, environment: MockEnvironment? = null): CoroutineScope =
         CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
             .also { simulation ->
+                if (environment != null) {
+                    useEnvironment(environment)
+                }
                 synchronized(lock) { simulations += simulation }
                 simulation.coroutineContext.job.invokeOnCompletion { release(simulation) }
             }
@@ -338,6 +353,39 @@ class PeripheralSpec<ID: Any> private constructor(
             setDefaultConnectionState(activePhy)
         }
     }
+
+    /**
+     * Sets the environment the peripheral is simulated in.
+     *
+     * If the peripheral is initially connected, the PHYs of that connection are limited to the
+     * ones supported by the environment.
+     */
+    private fun useEnvironment(environment: MockEnvironment) {
+        simulationEnvironment = environment
+        phy = phy?.limitedTo(environment)
+    }
+
+    /** Whether the PHY is supported by the peripheral and by the given environment, if known. */
+    private fun isSupported(phy: Phy, environment: MockEnvironment?): Boolean = phy in supportedPhy &&
+            when (phy) {
+                Phy.PHY_LE_2M -> environment?.isLe2MPhySupported ?: true
+                Phy.PHY_LE_CODED -> environment?.isLeCodedPhySupported ?: true
+                else -> true
+            }
+
+    /** Replaces PHYs that are not supported by both sides with LE 1M, which is always supported. */
+    private fun PhyInUse.limitedTo(environment: MockEnvironment?) = PhyInUse(
+        txPhy = txPhy.takeIf { isSupported(it, environment) } ?: Phy.PHY_LE_1M,
+        rxPhy = rxPhy.takeIf { isSupported(it, environment) } ?: Phy.PHY_LE_1M,
+    )
+
+    /** The maximum ATT MTU supported by both the peripheral and the environment, if known. */
+    private fun maxAttMtu(environment: MockEnvironment?): Int =
+        min(maxAttMtu ?: ATT_MTU_DEFAULT, environment?.maxAttMtu ?: ATT_MTU_MAX)
+
+    /** The maximum Link Layer MTU supported by both the peripheral and the environment, if known. */
+    private fun maxLlMtu(environment: MockEnvironment?): Int =
+        min(maxLlMtu ?: LL_MTU_DEFAULT, environment?.maxLlMtu ?: LL_MTU_MAX)
 
     /** Sets the parameters of a new connection, which has just been established. */
     private fun setDefaultConnectionState(phy: PhyInUse) {
@@ -618,10 +666,12 @@ class PeripheralSpec<ID: Any> private constructor(
         when (eventHandler.onConnectionRequest(phy)) {
             is ConnectionResult.Accept -> {
                 connectionsCount += 1
-                // TODO The MTU can here be set to above Environment's max ATT MTU.
-                this.mtu = mtu.coerceIn(ATT_MTU_DEFAULT, maxAttMtu)
-                this.llMtu = maxLlMtu
-                this.phy = PhyInUse(phy.toPhy(), phy.toPhy())
+                // The connection is limited to what both the phone and the peripheral support.
+                this.mtu = mtu.coerceIn(ATT_MTU_DEFAULT, maxAttMtu(simulationEnvironment))
+                this.llMtu = maxLlMtu(simulationEnvironment)
+                if (isSupported(phy.toPhy(), simulationEnvironment)) {
+                    this.phy = PhyInUse(phy.toPhy(), phy.toPhy())
+                } // else defaults to PHY LE 1M, as the phone does not support the PHY
             }
             else -> {
                 // Do nothing. Assume that the connection request times out.
@@ -809,8 +859,8 @@ class PeripheralSpec<ID: Any> private constructor(
     fun simulateMtuRequest(mtu: Int) {
         // MTU and max MTU are null if peripheral is not connected.
         val currentMtu = this.mtu ?: return
-        val maxAttMtu = this.maxAttMtu ?: return
-        val newMtu = mtu.coerceIn(23, maxAttMtu)
+        if (maxAttMtu == null) return
+        val newMtu = mtu.coerceIn(ATT_MTU_DEFAULT, maxAttMtu(simulationEnvironment))
 
         // MTU may be changed only once per connection.
         // If MTU is grater than 23, it has already been changed.
@@ -854,6 +904,9 @@ class PeripheralSpec<ID: Any> private constructor(
         advertisements: Flow<MockScanResult<*>>,
         managerScope: CoroutineScope,
     ): Api {
+        if (simulationEnvironment == null) {
+            useEnvironment(environment)
+        }
         return Api(environment, managerScope).also { gatt ->
             // If the mock peripheral is already connected (to the phone) and another
             // (virtual) client (that is Peripheral instance) tries to connect to it,
@@ -888,14 +941,29 @@ class PeripheralSpec<ID: Any> private constructor(
             }
 
             // Connection Request is sent as a response to a connectable advertisement.
-            // Note: The advertisements flow already has results filtered by supported PHY.
+            // Note: The advertisements flow is not filtered by the PHYs supported by the phone,
+            // so a device advertising on a PHY the phone can't receive must be skipped here,
+            // just like the scanner does.
             val advertisement = advertisements.first { scanResult ->
-                scanResult.peripheralSpec.identifier == identifier && scanResult.isConnectable
+                scanResult.peripheralSpec.identifier == identifier &&
+                        scanResult.isConnectable &&
+                        environment.canReceive(scanResult)
             }
 
             // Note: Ignoring "preferred PHY" set by user. Choosing the primary PHY of scanned packet.
             gatt.connect(advertisement.primaryPhy, autoMtu)
         }
+    }
+
+    /**
+     * Returns whether the phone can receive the advertisement, that is whether it supports
+     * the PHYs it was sent on.
+     */
+    private fun MockEnvironment.canReceive(result: MockScanResult<*>): Boolean = when {
+        result.primaryPhy == PrimaryPhy.PHY_LE_CODED && !isScanningOnLeCodedPhySupported -> false
+        result.secondaryPhy == Phy.PHY_LE_CODED && !isLeCodedPhySupported -> false
+        result.secondaryPhy == Phy.PHY_LE_2M && !isLe2MPhySupported -> false
+        else -> true
     }
 
     /**
@@ -970,7 +1038,10 @@ class PeripheralSpec<ID: Any> private constructor(
 
                 ConnectionResult.Accept -> {
                     connectionsCount += 1
-                    this@PeripheralSpec.phy = PhyInUse(phy.toPhy(), phy.toPhy())
+                    // The connection is established on the PHY of the advertisement, unless
+                    // it is not supported by both sides.
+                    val connectionPhy = phy.toPhy().takeIf { isSupported(it, environment) } ?: Phy.PHY_LE_1M
+                    this@PeripheralSpec.phy = PhyInUse(connectionPhy, connectionPhy)
                     this@PeripheralSpec.llMtu = maxSupportedLlMtu
                     // TODO set L2CAP MTU to max supported value
                     // Note: onConnectionRequest callback can request MTU, bonding or PHY update.
@@ -1134,8 +1205,8 @@ class PeripheralSpec<ID: Any> private constructor(
             delay(connectionParameters.connectionIntervalMillis.milliseconds)
 
             // Check if the peripheral is still connected.
-            val maxAttMtu = maxAttMtu ?: return false
-            val newMtu = mtu.coerceIn(23, maxAttMtu)
+            if (maxAttMtu == null) return false
+            val newMtu = mtu.coerceIn(ATT_MTU_DEFAULT, maxAttMtu(environment))
 
             this@PeripheralSpec.mtu = newMtu
             _events.emit(MtuChanged(newMtu))
@@ -1194,12 +1265,19 @@ class PeripheralSpec<ID: Any> private constructor(
          */
         // TODO PHY option is ignored. This could be use to improve estimating transfer duration.
         suspend fun setPreferredPhy(txPhy: Phy, rxPhy: Phy, phyOptions: PhyOption) {
-            val requestedPhy = PhyInUse(txPhy, rxPhy)
+            val currentPhy = this@PeripheralSpec.phy ?: return
+
+            // Only PHYs supported by both the phone and the peripheral can be used.
+            // For the others the current PHY stays in use.
+            val requestedPhy = PhyInUse(
+                txPhy = txPhy.takeIf { isSupported(it, environment) } ?: currentPhy.txPhy,
+                rxPhy = rxPhy.takeIf { isSupported(it, environment) } ?: currentPhy.rxPhy,
+            )
 
             // If the requested PHY is already in use, just emit it.
             // The collector is waiting for the PhyChanged event.
-            if (this@PeripheralSpec.phy == requestedPhy) {
-                _events.emit(PhyChanged(requestedPhy))
+            if (currentPhy == requestedPhy) {
+                _events.emit(PhyChanged(currentPhy))
                 return
             }
 
@@ -1220,7 +1298,7 @@ class PeripheralSpec<ID: Any> private constructor(
          */
         suspend fun readPhy() {
             val phy = phy ?: return
-            _events.emit(PhyChanged(phy))
+            _events.emit(PhyChanged(phy.limitedTo(environment)))
         }
 
         /**

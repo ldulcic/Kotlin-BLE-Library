@@ -42,8 +42,12 @@ import org.jetbrains.annotations.Range
  * and 1 for the op code).
  * @property maxLlMtu The maximum supported Link Layer MTU. This defaults to 27 bytes and can be
  * extended to 251 with Data Length Extension (DLE).
+ * @property isLe2MPhySupported Whether the LE 2M PHY is supported.
+ * @property isLeCodedPhySupported Whether the LE Coded PHY is supported.
  */
 interface MockEnvironment : Environment {
     val maxAttMtu: @Range(from = 23, to = 517) Int
     val maxLlMtu: @Range(from = 27, to = 251) Int
+    val isLe2MPhySupported: Boolean
+    val isLeCodedPhySupported: Boolean
 }

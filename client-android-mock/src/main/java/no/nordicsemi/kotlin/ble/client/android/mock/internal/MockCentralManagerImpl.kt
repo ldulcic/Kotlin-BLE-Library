@@ -82,7 +82,7 @@ open class MockCentralManagerImpl(
 
     // Simulation methods
     private var peripheralSpecs = mutableListOf<PeripheralSpec<String>>()
-    private val mockAdvertiser = MockBluetoothLeAdvertiser<String>(scope, clock)
+    private val mockAdvertiser = MockBluetoothLeAdvertiser<String>(scope, clock, environment)
 
     override fun simulatePeripherals(peripherals: List<PeripheralSpec<String>>) {
         require(peripheralSpecs.isEmpty()) {

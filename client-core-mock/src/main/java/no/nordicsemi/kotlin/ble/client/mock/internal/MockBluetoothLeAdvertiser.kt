@@ -43,6 +43,7 @@ import no.nordicsemi.kotlin.ble.client.mock.Proximity
 import no.nordicsemi.kotlin.ble.core.Bluetooth5AdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.Environment
+import no.nordicsemi.kotlin.ble.core.mock.MockEnvironment
 import kotlin.random.Random
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
@@ -52,10 +53,13 @@ import kotlin.time.Duration.Companion.milliseconds
  *
  * @param scope The scope of the mock central manager.
  * @param clock The clock used for timestamps of the advertising events.
+ * @param environment The environment of the mock central manager. The simulated peripherals use it
+ * to limit the MTU and PHYs of their connections. A peripheral is simulated in one environment.
  */
 class MockBluetoothLeAdvertiser<ID: Any>(
     private val scope: CoroutineScope,
     private val clock: Clock = Clock.System,
+    private val environment: MockEnvironment? = null,
 ) {
     // A real advertiser never waits for scanners, so emitting must not suspend. The buffer holds
     // events for subscribers that are momentarily behind, e.g. when many devices advertise at
@@ -87,7 +91,7 @@ class MockBluetoothLeAdvertiser<ID: Any>(
             // Both the advertising below and the simulation work of the peripheral itself
             // (timers, monitoring jobs) run in this scope. A peripheral given twice replaces
             // its previous simulation.
-            val simulation = peripheralSpec.attach(scope)
+            val simulation = peripheralSpec.attach(scope, environment)
             simulations.put(peripheralSpec, simulation)?.let { peripheralSpec.detach(it) }
 
             // If a peripheral has defined advertising data, begin mock advertising.
