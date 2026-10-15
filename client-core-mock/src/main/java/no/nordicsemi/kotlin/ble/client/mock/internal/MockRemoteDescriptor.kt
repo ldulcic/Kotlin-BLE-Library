@@ -31,7 +31,6 @@
 
 package no.nordicsemi.kotlin.ble.client.mock.internal
 
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.SharedFlow
 import no.nordicsemi.kotlin.ble.client.GattEvent
@@ -53,7 +52,6 @@ import no.nordicsemi.kotlin.ble.core.internal.CCCD
 import no.nordicsemi.kotlin.ble.core.internal.CEPD
 import no.nordicsemi.kotlin.ble.core.internal.CUD
 import no.nordicsemi.kotlin.ble.core.internal.DescriptorDefinition
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
 
 class MockRemoteDescriptor(
@@ -67,13 +65,12 @@ class MockRemoteDescriptor(
 
     override suspend fun FlowCollector<GattEvent>.executeRead() {
         val eventHandler = checkNotNull(peripheralSpec.eventHandler)
-        val connectionInterval = checkNotNull(peripheralSpec.connectionParameters)
-            .connectionIntervalMillis.milliseconds
+        check(peripheralSpec.isConnected) { "Peripheral not connected" }
 
         // Ensure that the services are valid.
         check(peripheralSpec.isServiceCacheValid) {
             // The read response is delivered in the next connection interval.
-            delay(connectionInterval)
+            peripheralSpec.emulateDelay()
             emit(DescriptorRead(
                 descriptor = this@MockRemoteDescriptor,
                 value = byteArrayOf(),
@@ -97,7 +94,7 @@ class MockRemoteDescriptor(
         }
         status?.let { status ->
             // The response is delivered in the next connection interval.
-            delay(connectionInterval)
+            peripheralSpec.emulateDelay()
             emit(DescriptorRead(
                 descriptor = this@MockRemoteDescriptor,
                 value = byteArrayOf(),
@@ -119,9 +116,7 @@ class MockRemoteDescriptor(
                 val truncatedData = result.value.take(512).toByteArray()
                 // Reading descriptor value takes time depending on the size of the value
                 // and connection parameters.
-                val duration =
-                    peripheralSpec.estimateTransferDuration(truncatedData, isWrite = false)
-                delay(duration)
+                peripheralSpec.emulateTransferDuration(truncatedData, isWrite = false)
                 emit(DescriptorRead(
                         descriptor = this@MockRemoteDescriptor,
                         value = truncatedData,
@@ -131,7 +126,7 @@ class MockRemoteDescriptor(
             }
             is ReadResponse.Failure -> {
                 // The read response is delivered in the next connection interval.
-                delay(connectionInterval)
+                peripheralSpec.emulateDelay()
                 emit(DescriptorRead(
                     descriptor = this@MockRemoteDescriptor,
                     value = byteArrayOf(),
@@ -143,13 +138,12 @@ class MockRemoteDescriptor(
 
     override suspend fun FlowCollector<GattEvent>.executeWrite(data: ByteArray) {
         val eventHandler = checkNotNull(peripheralSpec.eventHandler)
-        val connectionInterval = checkNotNull(peripheralSpec.connectionParameters)
-            .connectionIntervalMillis.milliseconds
+        check(peripheralSpec.isConnected) { "Peripheral not connected" }
 
         // Ensure that the services are valid.
         check(peripheralSpec.isServiceCacheValid) {
             // The write response is delivered in the next connection interval.
-            delay(connectionInterval)
+            peripheralSpec.emulateDelay()
             emit(DescriptorWrite(
                 descriptor = this@MockRemoteDescriptor,
                 // TODO Verify if this is the correct status to use.
@@ -172,7 +166,7 @@ class MockRemoteDescriptor(
         }
         status?.let { status ->
             // The response is delivered in the next connection interval.
-            delay(connectionInterval)
+            peripheralSpec.emulateDelay()
             emit(DescriptorWrite(
                 descriptor = this@MockRemoteDescriptor,
                 status = status,
@@ -207,14 +201,12 @@ class MockRemoteDescriptor(
                     is PrepareWriteResponse.Success -> {
                         // Writing descriptor value takes time depending on the size of the value
                         // and connection parameters.
-                        val duration =
-                            peripheralSpec.estimateTransferDuration(data, isWrite = true, withResponse = true)
-                        delay(duration)
+                        peripheralSpec.emulateTransferDuration(data, isWrite = true, withResponse = true)
                         // Validate received data. In case of an incorrect data, throw an exception.
                         val match = truncatedData.contentEquals(result.value)
                         // Long Write automatically executes or aborts all prepared writes.
                         val result = eventHandler.onExecuteWriteRequest(match)
-                        delay(connectionInterval)
+                        peripheralSpec.emulateDelay()
                         if (!match) {
                             throw ValueDoesNotMatchException()
                         }
@@ -236,7 +228,7 @@ class MockRemoteDescriptor(
 
                     is PrepareWriteResponse.Failure -> {
                         // The write response is delivered in the next connection interval.
-                        delay(connectionInterval)
+                        peripheralSpec.emulateDelay()
                         emit(DescriptorWrite(
                             descriptor = this@MockRemoteDescriptor,
                             status = result.status,
@@ -257,9 +249,7 @@ class MockRemoteDescriptor(
                     is WriteResponse.Success -> {
                         // Writing descriptor value takes time depending on the size of the value
                         // and connection parameters.
-                        val duration =
-                            peripheralSpec.estimateTransferDuration(truncatedData, isWrite = true, withResponse = true)
-                        delay(duration)
+                        peripheralSpec.emulateTransferDuration(truncatedData, isWrite = true, withResponse = true)
                         emit(DescriptorWrite(
                             descriptor = this@MockRemoteDescriptor,
                             status = OperationStatus.Success,
@@ -271,7 +261,7 @@ class MockRemoteDescriptor(
                             else -> { /* continue */ }
                         }
                         // The write response is delivered in the next connection interval.
-                        delay(connectionInterval)
+                        peripheralSpec.emulateDelay()
                         emit(DescriptorWrite(
                             descriptor = this@MockRemoteDescriptor,
                             status = result.status,
