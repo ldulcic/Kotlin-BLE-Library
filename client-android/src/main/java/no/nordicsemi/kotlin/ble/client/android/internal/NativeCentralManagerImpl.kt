@@ -355,7 +355,13 @@ internal class NativeCentralManagerImpl(
         logger?.trace(Layer.GAP) {
             "Starting scanning with ${filters?.let { "filters: $it" } ?: "no filters"}"
         }
-        adapter.stopLeScan(callback)
+        if (!adapter.startLeScan(callback)) {
+            with (ScanningFailedToStartException(ScanningFailedToStartException.Reason.InternalError)) {
+                logger?.error(Layer.GAP, this)
+                closeWithCallSite(this)
+            }
+            return
+        }
 
         // Set a timeout to stop the scan.
         if (timeout > 0.milliseconds) {
