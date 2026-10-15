@@ -63,6 +63,9 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -93,7 +96,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import no.nordicsemi.kotlin.ble.android.sample.theme.AppTheme
-import no.nordicsemi.kotlin.ble.android.sample.view.LabeledSwitch
 import no.nordicsemi.kotlin.ble.client.AnyRemoteService
 import no.nordicsemi.kotlin.ble.client.RemoteCharacteristic
 import no.nordicsemi.kotlin.ble.client.RemoteDescriptor
@@ -104,6 +106,7 @@ import no.nordicsemi.kotlin.ble.client.android.preview.PreviewRemoteDescriptor
 import no.nordicsemi.kotlin.ble.client.android.preview.PreviewRemoteService
 import no.nordicsemi.kotlin.ble.core.CharacteristicProperty
 import no.nordicsemi.kotlin.ble.core.WriteType
+import no.nordicsemi.kotlin.ble.core.defaultWriteType
 import no.nordicsemi.kotlin.ble.core.util.fromShortUuid
 import no.nordicsemi.kotlin.ble.core.util.toShortString
 import java.text.SimpleDateFormat
@@ -874,8 +877,19 @@ private fun WriteDialog(
     onWrite: (ByteArray, WriteType, String) -> Unit,
 ) {
     var text by remember(initialValue) { mutableStateOf(initialValue) }
-    val defaultResponseRequired = CharacteristicProperty.WRITE in characteristic.properties
-    var responseRequired by remember { mutableStateOf(defaultResponseRequired) }
+    // The write types supported by the characteristic. Signed Write is rarely used,
+    // so it is not offered.
+    val writeTypes = remember(characteristic) {
+        listOfNotNull(
+            WriteType.WITH_RESPONSE.takeIf { CharacteristicProperty.WRITE in characteristic.properties },
+            WriteType.WITHOUT_RESPONSE.takeIf { CharacteristicProperty.WRITE_WITHOUT_RESPONSE in characteristic.properties },
+        )
+    }
+    var writeType by remember(writeTypes) {
+        mutableStateOf(
+            writeTypes.firstOrNull() ?: characteristic.properties.defaultWriteType ?: WriteType.WITH_RESPONSE
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
@@ -936,12 +950,32 @@ private fun WriteDialog(
                             }
                         }
                     }
-                    LabeledSwitch(
-                        title = "Response required",
-                        enabled = true,
-                        checked = responseRequired,
-                        onCheckedChange = { responseRequired = it },
-                    )
+                    if (writeTypes.isNotEmpty()) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "Write type",
+                            )
+                            SingleChoiceSegmentedButtonRow(
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                writeTypes.forEachIndexed { index, type ->
+                                    SegmentedButton(
+                                        selected = type == writeType,
+                                        onClick = { writeType = type },
+                                        // There is nothing to choose from if only one is supported.
+                                        enabled = writeTypes.size > 1,
+                                        shape = SegmentedButtonDefaults.itemShape(
+                                            index = index,
+                                            count = writeTypes.size,
+                                        ),
+                                        label = { Text(type.label) },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -949,11 +983,6 @@ private fun WriteDialog(
             TextButton(
                 onClick = {
                     val bytes = text.toHexByteArray()
-                    val writeType = if (responseRequired) {
-                        WriteType.WITH_RESPONSE
-                    } else {
-                        WriteType.WITHOUT_RESPONSE
-                    }
                     onWrite(bytes, writeType, text)
                     onDismissRequest()
                 }
@@ -968,6 +997,13 @@ private fun WriteDialog(
         }
     )
 }
+
+private val WriteType.label: String
+    get() = when (this) {
+        WriteType.WITH_RESPONSE -> "With Response"
+        WriteType.WITHOUT_RESPONSE -> "Without Response"
+        WriteType.SIGNED -> "Signed"
+    }
 
 private fun String.toHexByteArray(): ByteArray {
     val cleanHex = filter { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
@@ -984,6 +1020,25 @@ private fun PreviewWriteDialog() {
             characteristic = PreviewRemoteCharacteristic(
                 shortUuid = 0x2A00,
                 properties = setOf(CharacteristicProperty.WRITE)
+            ),
+            initialValue = "01",
+            onDismissRequest = {},
+            onWrite = { _, _, _ -> }
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PreviewWriteDialog_bothWriteTypes() {
+    AppTheme {
+        WriteDialog(
+            characteristic = PreviewRemoteCharacteristic(
+                shortUuid = 0x2A00,
+                properties = setOf(
+                    CharacteristicProperty.WRITE,
+                    CharacteristicProperty.WRITE_WITHOUT_RESPONSE,
+                )
             ),
             initialValue = "01",
             onDismissRequest = {},
