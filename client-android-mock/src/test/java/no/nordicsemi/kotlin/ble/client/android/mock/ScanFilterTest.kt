@@ -44,7 +44,6 @@ import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.mock.AdvertisingDataScope
 import no.nordicsemi.kotlin.ble.core.util.fromShortUuid
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -290,7 +289,6 @@ class ScanFilterTest {
     }
 
     @Test
-    @Ignore("ScanFilter.matches passes devices that lack the requested service data / manufacturer data.")
     fun `service data filter does not report devices without service data for that uuid`() = runTest {
         val found = scanned(
             device(A) { ServiceData(ENVIRONMENT, byteArrayOf(0x01)) },
@@ -336,7 +334,6 @@ class ScanFilterTest {
     }
 
     @Test
-    @Ignore("ScanFilter.matches passes devices that lack the requested service data / manufacturer data.")
     fun `manufacturer data filter does not report devices of another company`() = runTest {
         val found = scanned(
             device(A) { ManufacturerData(NORDIC, byteArrayOf(0x10)) },
@@ -349,7 +346,6 @@ class ScanFilterTest {
     }
 
     @Test
-    @Ignore("ScanFilter.matches passes devices that lack the requested service data / manufacturer data.")
     fun `manufacturer data filter does not report devices without manufacturer data`() = runTest {
         val found = scanned(
             device(A) { CompleteLocalName("Sensor") },
@@ -362,7 +358,6 @@ class ScanFilterTest {
     }
 
     @Test
-    @Ignore("ScanFilter.matches passes devices that lack the requested service data / manufacturer data.")
     fun `company id filter reports devices with any data of that company`() = runTest {
         val found = scanned(
             device(A) { ManufacturerData(NORDIC, byteArrayOf(0x01)) },
@@ -376,7 +371,6 @@ class ScanFilterTest {
     }
 
     @Test
-    @Ignore("ScanFilter.matches passes devices that lack the requested service data / manufacturer data.")
     fun `company id filter does not report devices without manufacturer data`() = runTest {
         val found = scanned(
             device(A) { CompleteLocalName("Sensor") },
@@ -402,7 +396,6 @@ class ScanFilterTest {
     }
 
     @Test
-    @Ignore("ScanFilter.matches: Custom(type, data) matches any device that has the type (forEach never returns false).")
     fun `custom ad type filter with data reports only devices with matching data`() = runTest {
         // The manufacturer specific data starts with the Company ID in little endian.
         val found = scanned(
@@ -479,7 +472,6 @@ class ScanFilterTest {
     }
 
     @Test
-    @Ignore("ScanFilter.matches passes devices that lack the requested service data / manufacturer data.")
     fun `nested all inside any requires all criteria of the chosen alternative`() = runTest {
         val found = scanned(
             device(A) { ServiceUuid(HEART_RATE); ServiceData(HEART_RATE, byteArrayOf(0x01)) },

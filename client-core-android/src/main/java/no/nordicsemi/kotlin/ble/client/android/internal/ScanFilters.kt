@@ -69,11 +69,15 @@ class ConjunctionFilter: ConjunctionFilterScope {
             // Now, cross merge each DisjunctionFilter with all filters from the input list,
             // replacing the input list with the output list after each iteration.
             disjunctionFilters.forEach { disjunctionFilter ->
+                // An empty Any doesn't set any criteria.
+                val alternatives = disjunctionFilter.filters
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: return@forEach
                 if (input.isEmpty()) {
                     input.add(ScanFilter())
                 }
                 input.forEach { localFilter ->
-                    disjunctionFilter.filters?.forEach { runtimeFilter ->
+                    alternatives.forEach { runtimeFilter ->
                         output.add(localFilter.merged(runtimeFilter))
                     }
                 }
@@ -83,7 +87,8 @@ class ConjunctionFilter: ConjunctionFilterScope {
                     output = mutableListOf()
                 }
             }
-            return input
+            // If no criteria were set at all, there is nothing to filter.
+            return input.takeIf { it.isNotEmpty() }
         }
 
     override fun Any(filter: DisjunctionFilterScope.() -> Unit) {
@@ -328,22 +333,24 @@ class ScanFilter {
         serviceSolicitationUuid?.let { (uuid, mask) ->
             advertisingData.serviceSolicitationUuids.firstOrNull { it.matches(uuid, mask) } ?: return false
         }
+        // A device that doesn't advertise the data doesn't match.
         serviceData?.let { (uuid, data, mask) ->
-            if (advertisingData.serviceData[uuid]?.matches(data, mask) == false) {
+            if (advertisingData.serviceData[uuid]?.matches(data, mask) != true) {
                 return false
             }
         }
         manufacturerData?.let { (companyId, data, mask) ->
-            if (advertisingData.manufacturerData[companyId]?.matches(data, mask) == false) {
+            if (advertisingData.manufacturerData[companyId]?.matches(data, mask) != true) {
                 return false
             }
         }
         customAdvertisingData?.let { (type, data, mask) ->
-            advertisingData.adStructures[type]?.forEach { adStructure ->
-                if (data == null || adStructure.matches(data, mask)) {
-                    return true
-                }
-            } ?: return false
+            // The device must advertise the AD type, and, if data is set, at least one structure
+            // of that type must match it.
+            val adStructures = advertisingData.adStructures[type] ?: return false
+            if (data != null && adStructures.none { it.matches(data, mask) }) {
+                return false
+            }
         }
         return true
     }
