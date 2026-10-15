@@ -219,6 +219,7 @@ class ScannerViewModel @Inject constructor(
             // done with the device.
             connectionScopeMap[peripheral] = CoroutineScope(context = Dispatchers.IO)
                 .apply {
+                    val connectionScope = this
                     launch {
                         try {
                             // This could be wrapped in withTimeout, but the Direct option
@@ -273,7 +274,7 @@ class ScannerViewModel @Inject constructor(
                             }
                         } catch (e: Exception) {
                             Timber.e(e, "Connection attempt failed")
-                            connectionScopeMap.remove(peripheral)?.cancel()
+                            cancelConnectionScope(peripheral, connectionScope)
                         }
                     }
                 }
@@ -740,6 +741,18 @@ class ScannerViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Cancels the given connection scope, and forgets it, unless it was already replaced
+     * by the scope of a newer connection to the same peripheral.
+     */
+    private fun cancelConnectionScope(peripheral: Peripheral, connectionScope: CoroutineScope?) {
+        if (connectionScope == null) return
+        if (connectionScopeMap[peripheral] === connectionScope) {
+            connectionScopeMap.remove(peripheral)
+        }
+        connectionScope.cancel()
+    }
+
     private fun observePeripheralState(peripheral: Peripheral, scope: CoroutineScope) {
         peripheral.state
             .onEach {
@@ -754,10 +767,15 @@ class ScannerViewModel @Inject constructor(
                     }
 
                     is ConnectionState.Disconnected -> {
-                        // Just for testing, wait with cancelling the scope to get all the logs.
-                        delay(500.milliseconds)
-                        // Cancel connection scope, so that previously launched jobs are canceled.
-                        connectionScopeMap.remove(peripheral)?.cancel()
+                        // The scope of the connection that has just ended. A new connection
+                        // started in the meantime has its own scope, which must not be cancelled.
+                        val connectionScope = connectionScopeMap[peripheral]
+                        scope.launch {
+                            // Just for testing, wait with cancelling the scope to get all the logs.
+                            delay(500.milliseconds)
+                            // Cancel connection scope, so that previously launched jobs are canceled.
+                            cancelConnectionScope(peripheral, connectionScope)
+                        }
                     }
 
                     else -> { /* Ignore */ }
