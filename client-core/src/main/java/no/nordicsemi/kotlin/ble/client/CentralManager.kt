@@ -61,11 +61,17 @@ interface CentralManager<
     /**
      * A list of peripherals that the central manager is able to match to the provided identifiers.
      *
+     * Peripherals are returned only when Bluetooth is powered on, that is when [state] is
+     * [Manager.State.POWERED_ON]. In any other state an empty list is returned, and no error is
+     * thrown. This is how `retrievePeripherals(withIdentifiers:)` of `CBCentralManager` works on iOS.
+     * Wait for the state to change before retrieving peripherals.
+     *
      * @param ids List of peripheral identifiers.
-     * @return List of peripherals. The list may have a smaller size than the input list.
+     * @return List of peripherals. The list may have a smaller size than the input list, and is
+     * empty if Bluetooth is not powered on.
      * @throws ManagerClosedException If the central manager has been closed.
-     * @throws BluetoothUnavailableException If Bluetooth is disabled or not available.
-     * @throws IllegalArgumentException If any of the identifiers is not valid.
+     * @throws IllegalArgumentException If any of the identifiers is not valid. This is checked
+     * regardless of the state.
      * @see [Peer.identifier]
      */
     fun getPeripheralsById(ids: List<ID>): List<P>
@@ -73,11 +79,14 @@ interface CentralManager<
     /**
      * A peripheral that the central manager is able to match to the provided identifier.
      *
+     * The peripheral is returned only when Bluetooth is powered on, see [getPeripheralsById].
+     *
      * @param id The peripheral identifier.
-     * @return A peripheral associated with the given UUID, if found.
+     * @return A peripheral associated with the given identifier, if found, or `null` if not found
+     * or Bluetooth is not powered on.
      * @throws ManagerClosedException If the central manager has been closed.
-     * @throws BluetoothUnavailableException If Bluetooth is disabled or not available.
-     * @throws IllegalArgumentException If the identifier is not valid.
+     * @throws IllegalArgumentException If the identifier is not valid. This is checked
+     * regardless of the state.
      * @see [Peer.identifier]
      */
     fun getPeripheralById(id: ID): P? = getPeripheralsById(listOf(id)).firstOrNull()

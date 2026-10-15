@@ -131,10 +131,19 @@ open class MockCentralManagerImpl(
         // Ensure the central manager has not been closed.
         ensureOpen()
 
-        return ids.map { id ->
+        // The identifiers are validated first, regardless of the state.
+        ids.forEach { id ->
             require(checkBluetoothAddress(id)) {
-                "$id + is not a valid Bluetooth address"
+                "$id is not a valid Bluetooth address"
             }
+        }
+
+        // Like on iOS, peripherals are returned only when Bluetooth is powered on.
+        if (state.value != Manager.State.POWERED_ON) {
+            logger?.warn(Layer.GAP) { "Peripherals can be retrieved only when Bluetooth is powered on (state: ${state.value})" }
+            return emptyList()
+        }
+        return ids.map { id ->
             peripheral(id) {
                 Peripheral(
                     scope = scope,
@@ -162,6 +171,12 @@ open class MockCentralManagerImpl(
 
         // Verify the BLUETOOTH_CONNECT permission is granted (Android 12+).
         checkConnectPermission()
+
+        // Like on iOS, peripherals are returned only when Bluetooth is powered on.
+        if (state.value != Manager.State.POWERED_ON) {
+            logger?.warn(Layer.GAP) { "Bonded peripherals can be retrieved only when Bluetooth is powered on (state: ${state.value})" }
+            return emptyList()
+        }
 
         // Here we need to concatenate two lists:
         // - known peripherals with bond information

@@ -49,12 +49,10 @@ import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.Phy
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.TxPowerLevel
-import no.nordicsemi.kotlin.ble.core.exception.BluetoothUnavailableException
 import no.nordicsemi.kotlin.ble.core.exception.ManagerClosedException
 import no.nordicsemi.kotlin.ble.core.util.fromShortUuid
 import no.nordicsemi.kotlin.ble.environment.android.mock.MockAndroidEnvironment
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -407,12 +405,80 @@ class ScanResultTest {
     }
 
     @Test
-    @Ignore("getPeripheralById in the mock does not check the Bluetooth state.")
-    fun `retrieving peripherals with Bluetooth turned off throws BluetoothUnavailableException`() = runTest {
+    fun `retrieving a peripheral with Bluetooth turned off returns null`() = runTest {
         val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
         val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
 
-        assertFailsWith<BluetoothUnavailableException> { manager.getPeripheralById(ADDRESS) }
+        assertNull(manager.getPeripheralById(ADDRESS))
+    }
+
+    @Test
+    fun `retrieving peripherals with Bluetooth turned off returns an empty list`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+
+        assertEquals(emptyList(), manager.getPeripheralsById(listOf(ADDRESS, OTHER_ADDRESS)))
+    }
+
+    @Test
+    fun `retrieving a peripheral on a device without Bluetooth returns null`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isBluetoothSupported = false)
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+
+        assertNull(manager.getPeripheralById(ADDRESS))
+    }
+
+    @Test
+    fun `retrieving a peripheral works again after Bluetooth is turned on`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+        assertNull(manager.getPeripheralById(ADDRESS))
+
+        environment.simulatePowerOn()
+
+        assertEquals(ADDRESS, manager.getPeripheralById(ADDRESS)?.identifier)
+    }
+
+    @Test
+    fun `peripheral retrieved earlier is not returned while Bluetooth is turned off`() = runTest {
+        // Like retrievePeripherals(withIdentifiers:) on iOS, which works only in the powered on state.
+        val environment = MockAndroidEnvironment.Api37()
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        environment.simulatePowerOff()
+        assertNull(manager.getPeripheralById(ADDRESS))
+
+        environment.simulatePowerOn()
+        assertSame(peripheral, manager.getPeripheralById(ADDRESS))
+    }
+
+    @Test
+    fun `identifiers are validated also when Bluetooth is turned off`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+
+        assertFailsWith<IllegalArgumentException> { manager.getPeripheralById("not an address") }
+        assertFailsWith<IllegalArgumentException> {
+            manager.getPeripheralsById(listOf(ADDRESS, "not an address"))
+        }
+    }
+
+    @Test
+    fun `retrieving a peripheral from a closed manager throws also when Bluetooth is turned off`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+        manager.close()
+
+        assertFailsWith<ManagerClosedException> { manager.getPeripheralById(ADDRESS) }
+    }
+
+    @Test
+    fun `bonded peripherals with Bluetooth turned off are an empty list`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+
+        assertEquals(emptyList(), manager.getBondedPeripherals())
     }
 
     // ---- Range ----
