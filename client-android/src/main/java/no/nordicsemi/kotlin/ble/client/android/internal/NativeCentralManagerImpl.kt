@@ -61,6 +61,7 @@ import no.nordicsemi.kotlin.ble.client.RangeEvent
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
 import no.nordicsemi.kotlin.ble.client.android.CentralManager.ScanOptions
 import no.nordicsemi.kotlin.ble.client.android.ConjunctionFilterScope
+import no.nordicsemi.kotlin.ble.client.android.EncryptionState
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.android.ScanResult
 import no.nordicsemi.kotlin.ble.client.android.exception.ScanningFailedToStartException
@@ -110,9 +111,108 @@ internal class NativeCentralManagerImpl(
         }
     }
 
+    private val _encryptionState =
+        MutableSharedFlow<Pair<String, EncryptionState>>(extraBufferCapacity = 1)
+
+    /**
+     * Whether the system is Android 16 QPR2 (API 36.1) or newer.
+     *
+     * Android 16 made the encryption broadcasts public, but the bond loss reason, the constants
+     * of its values, and [BluetoothDevice.ENCRYPTION_ALGORITHM_UNKNOWN] were added in 36.1.
+     */
+    private val isBaklava1OrNewer: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA &&
+                Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1
+
+    /**
+     * Receives the encryption state of the link.
+     *
+     * The broadcasts are public since Android 16 (API 36). Before, they required
+     * BLUETOOTH_PRIVILEGED permission.
+     */
+    private val encryptionBroadcastReceiver = object : BroadcastReceiver() {
+        @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val intent = intent ?: return
+            // The receiver is registered on Android 16+ only, so the typed getter is available.
+            val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                ?: return
+            // Only Bluetooth LE links are supported by the library.
+            if (intent.getIntExtra(BluetoothDevice.EXTRA_TRANSPORT, BluetoothDevice.TRANSPORT_LE) != BluetoothDevice.TRANSPORT_LE) {
+                return
+            }
+            val state = when (intent.action) {
+                BluetoothDevice.ACTION_ENCRYPTION_CHANGE -> intent.toEncryptionState()
+                // Without the reason, which was added in 36.1, the broadcast has no use.
+                BluetoothDevice.ACTION_KEY_MISSING -> if (isBaklava1OrNewer) intent.toKeyMissingState() else return
+                else -> return
+            }
+            logger?.info(Layer.SMP) { "Encryption state of $device changed: $state" }
+            _encryptionState.tryEmit(device.address to state)
+        }
+    }
+
+    /** Converts the [BluetoothDevice.ACTION_ENCRYPTION_CHANGE] broadcast. */
+    @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+    private fun Intent.toEncryptionState(): EncryptionState {
+        val status = getIntExtra(BluetoothDevice.EXTRA_ENCRYPTION_STATUS, 0)
+        return when {
+            status != 0 -> EncryptionState.EncryptionFailed(EncryptionState.Reason.ControllerError(status))
+            getBooleanExtra(BluetoothDevice.EXTRA_ENCRYPTION_ENABLED, false) -> EncryptionState.Encrypted(
+                // ENCRYPTION_ALGORITHM_UNKNOWN is not available in 36.0, so any other value is unknown.
+                algorithm = when (getIntExtra(BluetoothDevice.EXTRA_ENCRYPTION_ALGORITHM, BluetoothDevice.ENCRYPTION_ALGORITHM_NONE)) {
+                    BluetoothDevice.ENCRYPTION_ALGORITHM_AES -> EncryptionState.Algorithm.AES
+                    BluetoothDevice.ENCRYPTION_ALGORITHM_E0 -> EncryptionState.Algorithm.E0
+                    else -> EncryptionState.Algorithm.Unknown
+                },
+                keySize = getIntExtra(BluetoothDevice.EXTRA_KEY_SIZE, 0).takeIf { it > 0 },
+            )
+            else -> EncryptionState.NotEncrypted
+        }
+    }
+
+    /**
+     * Converts the [BluetoothDevice.ACTION_KEY_MISSING] broadcast.
+     *
+     * The bond loss reason is available since Android 16 QPR2 (API 36.1).
+     */
+    @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+    private fun Intent.toKeyMissingState(): EncryptionState = EncryptionState.EncryptionFailed(
+        when (getIntExtra(BluetoothDevice.EXTRA_BOND_LOSS_REASON, BluetoothDevice.BOND_LOSS_REASON_UNKNOWN)) {
+            BluetoothDevice.BOND_LOSS_REASON_LE_ENCRYPT_FAILURE -> EncryptionState.Reason.LeEncryptionFailure
+            BluetoothDevice.BOND_LOSS_REASON_LE_INCOMING_PAIRING -> EncryptionState.Reason.LeIncomingPairing
+            BluetoothDevice.BOND_LOSS_REASON_BREDR_AUTH_FAILURE -> EncryptionState.Reason.BrEdrAuthenticationFailure
+            BluetoothDevice.BOND_LOSS_REASON_BREDR_INCOMING_PAIRING -> EncryptionState.Reason.BrEdrIncomingPairing
+            else -> EncryptionState.Reason.Unknown
+        }
+    )
+
     init {
         val monitorBondState = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
         ContextCompat.registerReceiver(environment.applicationContext, bondStateBroadcastReceiver, monitorBondState, ContextCompat.RECEIVER_EXPORTED)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+            val monitorEncryption = IntentFilter().apply {
+                addAction(BluetoothDevice.ACTION_ENCRYPTION_CHANGE)
+                // In 36.0 the broadcast has no extras.
+                if (isBaklava1OrNewer) {
+                    addAction(BluetoothDevice.ACTION_KEY_MISSING)
+                }
+            }
+            ContextCompat.registerReceiver(environment.applicationContext, encryptionBroadcastReceiver, monitorEncryption, ContextCompat.RECEIVER_EXPORTED)
+        }
+    }
+
+    /** Forwards the bond state and encryption state of the device with the given address. */
+    private fun NativeExecutor.observeBroadcasts(address: String) {
+        _bondState
+            .filter { (deviceAddress, _) -> deviceAddress == address }
+            .onEach { (_, state) -> onBondStateChanged(state) }
+            .launchIn(scope)
+        _encryptionState
+            .filter { (deviceAddress, _) -> deviceAddress == address }
+            .onEach { (_, state) -> onEncryptionStateChanged(state) }
+            .launchIn(scope)
     }
 
     override fun getPeripheralsById(ids: List<String>): List<Peripheral> {
@@ -137,12 +237,7 @@ internal class NativeCentralManagerImpl(
                 Peripheral(
                     scope = scope,
                     impl = NativeExecutor(environment, adapter.getRemoteDevice(it), null)
-                        .apply {
-                            _bondState
-                                .filter { (address, _) -> address == id }
-                                .onEach { (_, state) -> onBondStateChanged(state) }
-                                .launchIn(scope)
-                        }
+                        .apply { observeBroadcasts(id) }
                 ).also { p -> p.logger = logger }
             }
         }
@@ -224,6 +319,11 @@ internal class NativeCentralManagerImpl(
         } catch (_: Exception) {
             // Ignore
         }
+        try {
+            environment.applicationContext.unregisterReceiver(encryptionBroadcastReceiver)
+        } catch (_: Exception) {
+            // Ignore, the receiver is registered on Android 16+ only.
+        }
     }
 
     // Implementations
@@ -300,12 +400,7 @@ internal class NativeCentralManagerImpl(
                             Peripheral(
                                 scope = scope,
                                 impl = NativeExecutor(environment, device, name)
-                                    .apply {
-                                        _bondState
-                                            .filter { (address, _) -> address == device.address }
-                                            .onEach { (_, state) -> onBondStateChanged(state) }
-                                            .launchIn(scope)
-                                    }
+                                    .apply { observeBroadcasts(device.address) }
                             ).also { p -> p.logger = logger }
                         }
                     }
@@ -398,12 +493,7 @@ internal class NativeCentralManagerImpl(
                             Peripheral(
                                 scope = scope,
                                 impl = NativeExecutor(environment, device, name)
-                                    .apply {
-                                        _bondState
-                                            .filter { (address, _) -> address == device.address }
-                                            .onEach { (_, state) -> onBondStateChanged(state) }
-                                            .launchIn(scope)
-                                    }
+                                    .apply { observeBroadcasts(device.address) }
                             ).also { p -> p.logger = logger }
                         }
                     }

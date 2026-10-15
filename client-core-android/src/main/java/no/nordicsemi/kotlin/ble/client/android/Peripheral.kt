@@ -129,6 +129,15 @@ open class Peripheral(
         val bondState: StateFlow<BondState>
 
         /**
+         * The state of the encryption of the link as a state flow.
+         *
+         * It is expected to be [EncryptionState.Unknown] when the peripheral is not connected,
+         * or the system does not report it. The state is reset to unknown when the peripheral
+         * disconnects.
+         */
+        val encryptionState: StateFlow<EncryptionState>
+
+        /**
          * Requests the connection priority to be changed.
          *
          * The result should be reported by emitting [ConnectionParametersChanged] event
@@ -301,8 +310,15 @@ open class Peripheral(
      * Some values are set while the connection is being prepared, before the state changes.
      */
     private fun <T: Any> StateFlow<T?>.whenConnected(): StateFlow<T?> =
-        combine(state, this) { state, value -> value.takeIf { state.isConnected } }
-            .stateIn(scope, SharingStarted.Eagerly, initialValue = null)
+        whenConnected(orElse = null)
+
+    /**
+     * Returns a flow that emits the value of this flow when the [state] is
+     * [ConnectionState.Connected], and [orElse] otherwise.
+     */
+    private fun <T> StateFlow<T>.whenConnected(orElse: T): StateFlow<T> =
+        combine(state, this) { state, value -> if (state.isConnected) value else orElse }
+            .stateIn(scope, SharingStarted.Eagerly, initialValue = orElse)
 
     // Common implementation
 
@@ -1039,8 +1055,15 @@ open class Peripheral(
     /**
      * Returns whether the system has bond information associated with this peripheral.
      *
+     * This means only that the phone stores a bond (keys) for the address of this peripheral.
+     * It does not mean that the peripheral is connected, or that the link is encrypted. Use
+     * [encryptionState] to check the latter.
+     *
      * #### Security Note
      * Having a bond information does not guarantee that the connection to the device is secure.
+     * Before Android 16 (API 36) it was not possible to check whether the link is encrypted, and
+     * older versions did not resume encryption when connecting to a bonded device, so a malicious
+     * device could pretend to be another one, and simply use an unencrypted link.
      * Android should terminate the connection to a device for which it has a bond information
      * if encryption cannot be resumed, but some devices don't do that. Instead, the bond state
      * is set to [BondState.BONDED] and the connection is kept open without any security.
@@ -1058,6 +1081,22 @@ open class Peripheral(
      */
     val bondState: StateFlow<BondState>
         get() = impl.bondState
+
+    /**
+     * The state of the encryption of the link.
+     *
+     * Having the bond information ([hasBondInformation]) does not mean the link is encrypted.
+     * This state tells whether it is. It is [EncryptionState.Unknown] when the peripheral is not
+     * connected, and on Android versions older than Android 16 (API 36), which do not report it.
+     *
+     * Android should encrypt the link with a bonded peripheral right after connecting. If it
+     * fails, e.g. because the peripheral lost the keys, the state is [EncryptionState.EncryptionFailed],
+     * and the connection should not be trusted.
+     *
+     * @see bondState
+     */
+    val encryptionState: StateFlow<EncryptionState> =
+        impl.encryptionState.whenConnected(orElse = EncryptionState.Unknown)
 
     /**
      * A helper property to extract the timeout from the [TimeoutCancellationException] message,

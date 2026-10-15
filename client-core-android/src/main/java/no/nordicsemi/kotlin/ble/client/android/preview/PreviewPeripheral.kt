@@ -58,6 +58,7 @@ import no.nordicsemi.kotlin.ble.client.RssiRead
 import no.nordicsemi.kotlin.ble.client.ServicesChanged
 import no.nordicsemi.kotlin.ble.client.ServicesDiscovered
 import no.nordicsemi.kotlin.ble.client.android.ConnectionPriority
+import no.nordicsemi.kotlin.ble.client.android.EncryptionState
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.exception.InvalidAttributeException
 import no.nordicsemi.kotlin.ble.client.exception.OperationFailedException
@@ -124,6 +125,8 @@ private class StubExecutor(
 
     private val _bondState = MutableStateFlow(if (hasBondInformation) BondState.BONDED else BondState.NONE)
     override val bondState: StateFlow<BondState> = _bondState.asStateFlow()
+
+    override val encryptionState: StateFlow<EncryptionState> = MutableStateFlow(EncryptionState.Unknown)
 
     override val isClosed: Boolean
         get() = false

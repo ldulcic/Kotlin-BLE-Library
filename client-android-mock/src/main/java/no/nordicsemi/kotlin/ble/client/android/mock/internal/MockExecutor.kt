@@ -33,9 +33,15 @@ package no.nordicsemi.kotlin.ble.client.android.mock.internal
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withTimeout
 import no.nordicsemi.kotlin.ble.client.android.ConnectionPriority
+import no.nordicsemi.kotlin.ble.client.android.EncryptionState
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
+import no.nordicsemi.kotlin.ble.client.mock.LinkEncryption
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.client.mock.internal.MockExecutor
 import no.nordicsemi.kotlin.ble.client.mock.internal.MockScanResult
@@ -69,6 +75,19 @@ open class MockExecutor(
     override val type: PeripheralType = peripheralSpec.type
 
     override val bondState = peripheralSpec.bondState
+
+    override val encryptionState: StateFlow<EncryptionState> = peripheralSpec.linkEncryption
+        .map { it.toEncryptionState() }
+        .stateIn(scope, SharingStarted.Eagerly, peripheralSpec.linkEncryption.value.toEncryptionState())
+
+    /** The encryption state is reported by Android 16 and newer. */
+    private fun LinkEncryption.toEncryptionState(): EncryptionState = when {
+        environment.androidSdkVersion < AndroidEnvironment.SdkVersion.BAKLAVA -> EncryptionState.Unknown
+        this == LinkEncryption.NotConnected -> EncryptionState.Unknown
+        this == LinkEncryption.NotEncrypted -> EncryptionState.NotEncrypted
+        this == LinkEncryption.Encrypted -> EncryptionState.Encrypted(EncryptionState.Algorithm.AES, keySize = 16)
+        else -> EncryptionState.EncryptionFailed(EncryptionState.Reason.LeEncryptionFailure)
+    }
 
     // Implementation
 
