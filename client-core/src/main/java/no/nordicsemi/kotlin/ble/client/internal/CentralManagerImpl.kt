@@ -34,13 +34,14 @@ package no.nordicsemi.kotlin.ble.client.internal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.newCoroutineContext
 import kotlinx.coroutines.withContext
 import no.nordicsemi.kotlin.ble.client.CentralManager
 import no.nordicsemi.kotlin.ble.client.Peripheral
@@ -48,7 +49,6 @@ import no.nordicsemi.kotlin.ble.client.ScanResult
 import no.nordicsemi.kotlin.ble.core.Environment
 import no.nordicsemi.kotlin.ble.core.Manager
 import no.nordicsemi.kotlin.ble.core.exception.ManagerClosedException
-import kotlin.coroutines.EmptyCoroutineContext
 
 /**
  * Base implementation of [CentralManager].
@@ -70,13 +70,18 @@ abstract class CentralManagerImpl<
     protected val scope: CoroutineScope,
     private val environment: Environment,
 ): CentralManager<ID, P, EX, F, SR> {
-    private var closeJob: Job
-    private var internalScope = CoroutineScope(scope.newCoroutineContext(EmptyCoroutineContext))
+    /**
+     * The scope of the jobs of this manager, e.g. closing the peripherals.
+     *
+     * It is a child of [scope], so that it is cancelled when [scope] is canceled, but it can be
+     * cancelled on its own, without cancelling [scope], when the manager is closed.
+     */
+    private val internalScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
 
     init {
         // Make sure the Central Manager gets closed when its scope gets canceled.
         // This coroutine gets cancelled when close() is called or when the scope gets canceled.
-        closeJob = internalScope.launch {
+        internalScope.launch {
             try { awaitCancellation() }
             finally { withContext(NonCancellable) { close() } }
         }
@@ -180,6 +185,18 @@ abstract class CentralManagerImpl<
 
     override fun close() {
         isOpen = false
-        closeJob.cancel()
+
+        // Close all the peripherals obtained from this manager, which also disconnects them.
+        // Closing a peripheral that is already closed has no effect.
+        managedPeripherals().forEach { peripheral ->
+            try {
+                peripheral.forceClose()
+            } catch (_: Exception) {
+                // Make sure that the other peripherals are closed.
+            }
+        }
+
+        // Cancel the jobs of this manager. The scope given to the manager is not affected.
+        internalScope.cancel()
     }
 }
