@@ -587,10 +587,13 @@ class PeripheralSpec<ID: Any> private constructor(
      *
      * A manager registered for connection event will be notified.
      *
-     * @param phy The PHY used to connect to the peripheral.
+     * @param phy The PHY used to connect to the peripheral. It must be supported by the
+     * peripheral, as it could not receive the connection request otherwise.
      * @param mtu The ATT MTU negotiated for the connection, defaults to the max ATT MTU
      * supported by the [PeripheralSpec].
      * @throws IllegalStateException if the peripheral is not connectable.
+     * @throws IllegalArgumentException if the PHY is not supported by the peripheral. The
+     * [PeripheralSpecEventHandler.onConnectionRequest] is not called then.
      */
     fun simulateConnection(
         phy: PrimaryPhy = PrimaryPhy.PHY_LE_1M,
@@ -599,6 +602,11 @@ class PeripheralSpec<ID: Any> private constructor(
         // Make sure the device is connectable.
         val maxAttMtu = this.maxAttMtu ?: return
         val maxLlMtu = this.maxLlMtu ?: return
+
+        // The peripheral can't receive a connection request sent on a PHY it doesn't support.
+        require(supportedPhy.contains(phy.toPhy())) {
+            "PHY ${phy.toPhy()} is not supported by the peripheral."
+        }
 
         // If another client is already connected, just increase the connections count.
         if (isConnected) {
@@ -613,9 +621,7 @@ class PeripheralSpec<ID: Any> private constructor(
                 // TODO The MTU can here be set to above Environment's max ATT MTU.
                 this.mtu = mtu.coerceIn(ATT_MTU_DEFAULT, maxAttMtu)
                 this.llMtu = maxLlMtu
-                if (supportedPhy.contains(phy.toPhy())) {
-                    this.phy = PhyInUse(phy.toPhy(), phy.toPhy())
-                } // else defaults to PHY LE 1M
+                this.phy = PhyInUse(phy.toPhy(), phy.toPhy())
             }
             else -> {
                 // Do nothing. Assume that the connection request times out.

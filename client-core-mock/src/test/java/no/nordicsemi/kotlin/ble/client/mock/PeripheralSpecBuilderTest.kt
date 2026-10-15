@@ -386,10 +386,42 @@ class PeripheralSpecBuilderTest {
     }
 
     @Test
-    fun `simulated connection uses 1M PHY when requested PHY is not supported`() {
+    fun `simulated connection on a PHY that is not supported is rejected`() {
         val spec = connectableSpec()
-        spec.simulateConnection(phy = PrimaryPhy.PHY_LE_CODED)
-        assertEquals(PhyInUse.PHY_LE_1M, spec.phy)
+        assertFailsWith<IllegalArgumentException> {
+            spec.simulateConnection(phy = PrimaryPhy.PHY_LE_CODED)
+        }
+        assertFalse(spec.isConnected)
+    }
+
+    @Test
+    fun `simulated connection on a PHY that is not supported does not reach the event handler`() {
+        var connectionRequests = 0
+        val spec = PeripheralSpec.simulatePeripheral("id") {
+            connectable(
+                name = "Device",
+                eventHandler = object : PeripheralSpecEventHandler {
+                    override fun onConnectionRequest(phy: PrimaryPhy): ConnectionResult {
+                        connectionRequests++
+                        return ConnectionResult.Accept
+                    }
+                },
+                services = { },
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            spec.simulateConnection(phy = PrimaryPhy.PHY_LE_CODED)
+        }
+        assertEquals(0, connectionRequests)
+    }
+
+    @Test
+    fun `simulated connection on a PHY that is not supported is rejected also when already connected`() {
+        val spec = connectableSpec()
+        spec.simulateConnection()
+        assertFailsWith<IllegalArgumentException> {
+            spec.simulateConnection(phy = PrimaryPhy.PHY_LE_CODED)
+        }
     }
 
     @Test
