@@ -314,6 +314,20 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
+    fun `closing the manager releases the connection when close returns`() = runTest {
+        val events = Events()
+        val spec = spec(events = events)
+        val manager = newManager(spec)
+        manager.connect(checkNotNull(manager.getPeripheralById(ADDRESS)))
+
+        // No time passes, and the dispatcher is not run.
+        manager.close()
+
+        assertFalse(spec.isConnected)
+        assertEquals(1, events.connectionsLost.size)
+    }
+
+    @Test
     fun `closing the manager lets the device know that the client has disconnected`() = runTest {
         val events = Events()
         val spec = spec(events = events)

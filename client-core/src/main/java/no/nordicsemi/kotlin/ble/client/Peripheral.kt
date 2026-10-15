@@ -404,8 +404,8 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
                             event.newState.isUserInitiated ||
                             event.newState.reason is ConnectionState.Disconnected.Reason.InsufficientAuthentication) {
                             handle(event)
-                            // This will call the onCompletion method below.
-                            gattEventCollector?.cancel()
+                            // Close the peripheral and stop collecting the events.
+                            close()
                         } else {
                             // If the connection will be retried, switch immediately to Connecting state.
                             // Note: This changes state Connected -> Connecting, without going through
@@ -418,8 +418,12 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
                 }
             }
             .onCompletion {
-                gattEventCollector = null
-                close()
+                // If this collector is still the current one, it was cancelled together with
+                // the scope, so the peripheral needs to be closed. Otherwise, the peripheral has
+                // already been closed, and it may be connecting again. It must not be closed then.
+                if (gattEventCollector === currentCoroutineContext()[Job]) {
+                    close()
+                }
             }
             // Peripheral will also be closed if the scope gets canceled.
             // The collector subscribes to the events right away, not when the scope gets to run it.
@@ -433,14 +437,15 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
      * @hide
      */
     protected fun close() {
-        // Cancel the event collector.
-        // If the collector was already canceled or wasn't started, close the executor.
-        gattEventCollector?.cancel() ?: run {
-            handleDisconnection()
-            handleClose()
-            impl.close()
-        }
+        // Cancel the event collector. It is not the current one when it completes, so it will
+        // not close the peripheral again, which could be already connecting.
+        val collector = gattEventCollector
         gattEventCollector = null
+        collector?.cancel()
+
+        handleDisconnection()
+        handleClose()
+        impl.close()
     }
 
     /**
