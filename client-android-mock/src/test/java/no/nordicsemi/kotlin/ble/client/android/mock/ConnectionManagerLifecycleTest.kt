@@ -60,7 +60,6 @@ import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.exception.ManagerClosedException
 import org.jetbrains.annotations.Range
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -561,7 +560,6 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("Needs triage: simulateDisconnection() does not move the Peripheral to Disconnected(TerminatePeerUser).")
     fun `device connected by another application is disconnected by the device`() = runTest {
         val spec = spec()
         val manager = newManager(spec)

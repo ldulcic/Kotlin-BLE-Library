@@ -379,6 +379,8 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
      * peripheral is again in range. In such cases, the [closeWhenDisconnected] parameter should
      * be set to `false`.
      *
+     * The collector subscribes to the events before this method returns.
+     *
      * @param closeWhenDisconnected True to close the connection when the peripheral disconnects;
      *        false to keep collecting events.
      * @hide
@@ -420,7 +422,10 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
                 close()
             }
             // Peripheral will also be closed if the scope gets canceled.
-            .launchIn(scope)
+            // The collector subscribes to the events right away, not when the scope gets to run it.
+            // The events are not replayed, so any event emitted in between, e.g. a disconnection
+            // just after the connection was established, would be lost.
+            .let { events -> scope.launch(start = CoroutineStart.UNDISPATCHED) { events.collect {} } }
     }
 
     /**
