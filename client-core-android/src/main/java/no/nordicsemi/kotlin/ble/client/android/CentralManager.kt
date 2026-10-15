@@ -60,9 +60,11 @@ interface CentralManager:
     /**
      * Returns a list of peripherals for which the system has bond information.
      *
-     * @return A list of bonded peripherals.
+     * Like [getPeripheralsById], peripherals are returned only when Bluetooth is powered on.
+     * Otherwise, an empty list is returned.
+     *
+     * @return A list of bonded peripherals, or an empty list if Bluetooth is not powered on.
      * @throws ManagerClosedException If the central manager has been closed.
-     * @throws BluetoothUnavailableException If Bluetooth is disabled or not available.
      * @throws SecurityException If BLUETOOTH_CONNECT permission is denied.
      */
     fun getBondedPeripherals(): List<Peripheral>

@@ -31,6 +31,7 @@
 
 package no.nordicsemi.kotlin.ble.client.android.internal
 
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -64,6 +65,7 @@ import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.android.ScanResult
 import no.nordicsemi.kotlin.ble.client.android.exception.ScanningFailedToStartException
 import no.nordicsemi.kotlin.ble.core.BondState
+import no.nordicsemi.kotlin.ble.core.Manager
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.exception.BluetoothUnavailableException
 import no.nordicsemi.kotlin.ble.core.internal.CallSiteException
@@ -117,7 +119,19 @@ internal class NativeCentralManagerImpl(
         // Ensure the central manager has not been closed.
         ensureOpen()
 
-        val adapter = environment.bluetoothManager?.adapter ?: throw BluetoothUnavailableException()
+        // The identifiers are validated first, regardless of the state.
+        ids.forEach { id ->
+            require(BluetoothAdapter.checkBluetoothAddress(id)) {
+                "$id is not a valid Bluetooth address"
+            }
+        }
+
+        // Like on iOS, peripherals are returned only when Bluetooth is powered on.
+        val adapter = environment.bluetoothManager?.adapter?.takeIf { state.value == Manager.State.POWERED_ON }
+        if (adapter == null) {
+            logger?.warn(Layer.GAP) { "Peripherals can be retrieved only when Bluetooth is powered on (state: ${state.value})" }
+            return emptyList()
+        }
         return ids.map { id ->
             peripheral(id) {
                 Peripheral(
@@ -141,7 +155,11 @@ internal class NativeCentralManagerImpl(
         // Verify the BLUETOOTH_CONNECT permission is granted (Android 12+).
         checkConnectPermission()
 
-        val adapter = environment.bluetoothManager?.adapter ?: throw BluetoothUnavailableException()
+        val adapter = environment.bluetoothManager?.adapter?.takeIf { state.value == Manager.State.POWERED_ON }
+        if (adapter == null) {
+            logger?.warn(Layer.GAP) { "Bonded peripherals can be retrieved only when Bluetooth is powered on (state: ${state.value})" }
+            return emptyList()
+        }
         val ids = adapter.bondedDevices?.map { it.address } ?: return emptyList()
         return getPeripheralsById(ids)
     }

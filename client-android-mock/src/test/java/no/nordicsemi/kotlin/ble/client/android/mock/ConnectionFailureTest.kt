@@ -363,9 +363,11 @@ class ConnectionFailureTest {
 
     @Test
     fun `connecting with Bluetooth turned off throws BluetoothUnavailableException`() = runTest {
-        val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
+        val environment = MockAndroidEnvironment.Api37()
         val manager = newManager(spec(), environment = environment)
+        // Peripherals can be retrieved only when Bluetooth is on.
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        environment.simulatePowerOff()
 
         assertFailsWith<no.nordicsemi.kotlin.ble.core.exception.BluetoothUnavailableException> {
             manager.connect(peripheral)
