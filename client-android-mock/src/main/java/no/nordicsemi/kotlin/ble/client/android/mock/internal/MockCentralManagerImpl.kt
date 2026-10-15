@@ -196,24 +196,27 @@ open class MockCentralManagerImpl(
         timeout: Duration,
         filter: ConjunctionFilterScope.() -> Unit
     ): Flow<ScanResult> {
-        // Ensure the central manager has not been closed.
-        ensureOpen()
-
-        // Ensure Bluetooth is supported.
-        check(environment.isBluetoothSupported && environment.isBluetoothEnabled) {
-            throw BluetoothUnavailableException()
-        }
-
-        // Verify the BLUETOOTH_SCAN permission is granted (Android 12+).
-        checkScanningPermission()
-
-        // Build the filter based on the provided builder
-        val filters = ConjunctionFilter().apply(filter).filters
-        logger?.trace(Layer.GAP) {
-            "Starting scanning with ${filters?.let { "filters: $it" } ?: "no filters"}"
-        }
-
         return channelFlow {
+            // Like with the native scanner, all errors are thrown when the flow is collected,
+            // not when scan() is called. This way they can be handled with Flow.catch().
+
+            // Ensure the central manager has not been closed.
+            ensureOpen()
+
+            // Ensure Bluetooth is supported.
+            check(environment.isBluetoothSupported && environment.isBluetoothEnabled) {
+                throw BluetoothUnavailableException()
+            }
+
+            // Verify the BLUETOOTH_SCAN permission is granted (Android 12+).
+            checkScanningPermission()
+
+            // Build the filter based on the provided builder
+            val filters = ConjunctionFilter().apply(filter).filters
+            logger?.trace(Layer.GAP) {
+                "Starting scanning with ${filters?.let { "filters: $it" } ?: "no filters"}"
+            }
+
             val reportResult = environment.scanner().getOrThrow()
 
             // Emit all scan results until the timeout.

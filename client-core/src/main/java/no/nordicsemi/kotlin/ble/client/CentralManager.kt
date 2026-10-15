@@ -91,6 +91,9 @@ interface CentralManager<
      * some of them. To choose which ones are kept, apply `conflate()` or a `buffer` with
      * `DROP_OLDEST` or `DROP_LATEST` to the returned flow, e.g. `buffer(64, DROP_LATEST)`.
      *
+     * The scan starts when the returned flow is collected, and all errors are thrown then, to the
+     * collector, not when this method is called. They can be handled using `Flow.catch()`.
+     *
      * @param timeout The scan duration. By default, the scan will run until the flow is closed.
      * @param filter The filter to apply. By default, no filter is applied.
      * @throws ManagerClosedException If the central manager has been closed.
