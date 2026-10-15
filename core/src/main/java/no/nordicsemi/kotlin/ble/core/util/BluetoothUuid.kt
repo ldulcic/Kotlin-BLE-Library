@@ -133,8 +133,11 @@ fun Uuid.Companion.fromShortUuid(shortUuid: Int): Uuid = baseUuid.toLongs { msb,
  * otherwise it will be in the form of standard UUID with dashes.
  */
 fun Uuid.toShortString(): String = shortUuid
+    // A 32-bit UUID may have the highest bit set, so the Int must not be formatted as signed.
+    ?.toUInt()
     ?.toString(16)
-    ?.padStart((if (is16BitUuid) 4 else 8), '0')?.uppercase()
+    ?.padStart((if (is16BitUuid) 4 else 8), '0')
+    ?.uppercase()
     ?: toString().uppercase()
 
 /**

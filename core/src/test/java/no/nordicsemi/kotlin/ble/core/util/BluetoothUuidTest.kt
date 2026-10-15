@@ -1,7 +1,6 @@
 package no.nordicsemi.kotlin.ble.core.util
 
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -127,7 +126,6 @@ class BluetoothUuidTest {
     }
 
     @Test
-    @Ignore("toShortString formats 32-bit UUIDs as signed ints.")
     fun `toShortString of 32-bit UUID with highest bit set is not signed`() {
         assertEquals("FFFFFFFF", Uuid.fromShortUuid(-1).toShortString())
         assertEquals("80000001", Uuid.fromShortUuid(0x80000001.toInt()).toShortString())
