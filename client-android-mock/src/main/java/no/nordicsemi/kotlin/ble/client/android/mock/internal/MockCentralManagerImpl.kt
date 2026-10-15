@@ -99,14 +99,17 @@ open class MockCentralManagerImpl(
         peripherals
             .filter { it.isKnown }
             .forEach {
-                managedPeripherals[it.identifier] = Peripheral(
-                    scope = scope,
-                    impl = MockExecutor(
-                        peripheralSpec = it,
-                        name = it.name,
-                        environment = environment,
-                        advertisements = mockAdvertiser.events,
+                addPeripheral(
+                    id = it.identifier,
+                    peripheral = Peripheral(
                         scope = scope,
+                        impl = MockExecutor(
+                            peripheralSpec = it,
+                            name = it.name,
+                            environment = environment,
+                            advertisements = mockAdvertiser.events,
+                            scope = scope,
+                        )
                     )
                 )
             }
@@ -166,7 +169,7 @@ open class MockCentralManagerImpl(
         // in runtime and would make all specs "known" (available for retrieval).
         // Should we iterate only managed, we would miss devices that were defined as bonded,
         // but were not scanned yet.
-        val managedBondedPeripherals = managedPeripherals.values
+        val managedBondedPeripherals = managedPeripherals()
             .filter { it.hasBondInformation }
 //        val otherBondedPeripherals = peripheralSpecs
 //            .filter { it.isBonded }
