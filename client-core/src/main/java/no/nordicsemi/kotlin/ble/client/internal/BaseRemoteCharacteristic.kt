@@ -284,8 +284,11 @@ abstract class BaseRemoteCharacteristic(
             throw SecurityException("Writing characteristic $uuid is not permitted")
         }
 
-        // Verify that the characteristic can be written.
-        require(isWritable()) {
+        // Verify that the characteristic can be written, using the requested write type.
+        // A Write Command to a characteristic that does not have the Write Without Response
+        // property would be ignored by the peripheral, and a Write Request to one without
+        // the Write property rejected, so don't send it at all.
+        require(isWritable() && writeType.requiredProperty in properties) {
             throw OperationFailedException(OperationStatus.WriteNotPermitted)
         }
 

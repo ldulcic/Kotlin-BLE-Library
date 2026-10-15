@@ -37,6 +37,7 @@ import no.nordicsemi.kotlin.ble.client.exception.InvalidAttributeException
 import no.nordicsemi.kotlin.ble.client.exception.OperationFailedException
 import no.nordicsemi.kotlin.ble.client.exception.ValueDoesNotMatchException
 import no.nordicsemi.kotlin.ble.core.Characteristic
+import no.nordicsemi.kotlin.ble.core.OperationStatus
 import no.nordicsemi.kotlin.ble.core.WriteType
 import no.nordicsemi.kotlin.ble.core.defaultWriteType
 import no.nordicsemi.kotlin.ble.core.exception.BluetoothException
@@ -159,7 +160,9 @@ interface RemoteCharacteristic: Characteristic<RemoteDescriptor> {
      * default write type based on its properties.
      * @throws ValueDoesNotMatchException if the value was sent using *Long Write* or *Reliable Write*
      * procedure and the value replied back by the peripheral does not match the value written.
-     * @throws OperationFailedException if the operation failed.
+     * @throws OperationFailedException if the operation failed, or if the characteristic does not
+     * support the given write type, that is it does not have the [WriteType.requiredProperty].
+     * In the latter case nothing is sent, and the status is [OperationStatus.WriteNotPermitted].
      * @throws InvalidAttributeException if the characteristic has been invalidated due to
      * disconnection or service change event.
      * @throws SecurityException if accessing the characteristic is not permitted.

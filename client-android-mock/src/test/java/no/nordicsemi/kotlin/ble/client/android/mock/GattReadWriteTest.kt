@@ -45,7 +45,6 @@ import no.nordicsemi.kotlin.ble.core.Permission
 import no.nordicsemi.kotlin.ble.core.WriteType
 import no.nordicsemi.kotlin.ble.core.and
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -520,7 +519,6 @@ class GattReadWriteTest {
     }
 
     @Test
-    @Ignore("Write type is not checked against the characteristic properties (only isWritable()).")
     fun `write without response to a characteristic that does not support it fails`() = runTest {
         withTimeout(10.seconds) {
             val handler = GattHandler()
@@ -540,7 +538,6 @@ class GattReadWriteTest {
     }
 
     @Test
-    @Ignore("Write type is not checked against the characteristic properties (only isWritable()).")
     fun `signed write is not accepted when characteristic does not support it`() = runTest {
         withTimeout(10.seconds) {
             val handler = GattHandler()
