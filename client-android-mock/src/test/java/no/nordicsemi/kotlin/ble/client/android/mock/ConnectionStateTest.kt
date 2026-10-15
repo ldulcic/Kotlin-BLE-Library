@@ -55,7 +55,6 @@ import no.nordicsemi.kotlin.ble.core.ConnectionState.Disconnected.Reason
 import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.environment.android.mock.LatestApi
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -258,7 +257,6 @@ class ConnectionStateTest {
     }
 
     @Test
-    @Ignore("Needs triage: simulateDisconnection() does not move the Peripheral to Disconnected(TerminatePeerUser).")
     fun `peripheral disconnecting by itself is reported as TerminatePeerUser`() = runTest {
         val events = Events()
         val spec = spec(events)
@@ -327,6 +325,20 @@ class ConnectionStateTest {
         settle(10.seconds)
 
         assertEquals(ConnectionState.Connected, peripheral.state.value)
+    }
+
+    @Test
+    fun `auto connect peripheral is reconnecting when the peripheral disconnects right after connecting`() = runTest {
+        val spec = spec()
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+
+        // No time passes between connecting and the disconnection.
+        spec.simulateDisconnection()
+        runCurrent()
+
+        assertEquals(ConnectionState.Connecting, peripheral.state.value)
     }
 
     @Test
