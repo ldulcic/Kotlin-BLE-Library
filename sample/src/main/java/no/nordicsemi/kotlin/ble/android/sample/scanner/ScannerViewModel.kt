@@ -103,6 +103,10 @@ class ScannerViewModel @Inject constructor(
 ): ViewModel() {
     val state = centralManager.state
 
+    // This must be initialized before the peripherals below, as their state observers use it
+    // as soon as they receive the first state.
+    private val connectionScopeMap = mutableMapOf<Peripheral, CoroutineScope>()
+
     private val _peripherals: MutableStateFlow<List<ScanResult>> = MutableStateFlow(
         listOf(
             // Note: It's not possible to connect to PreviewPeripheral instances.
@@ -141,8 +145,6 @@ class ScannerViewModel @Inject constructor(
      * but it requires API 24.
      */
     private val subscriptions = mutableMapOf<RemoteCharacteristic, Job>()
-
-    private var connectionScopeMap = mutableMapOf<Peripheral, CoroutineScope>()
 
     private val rssiMonitors = mutableMapOf<Peripheral, RssiMonitor>()
 
