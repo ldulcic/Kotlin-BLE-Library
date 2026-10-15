@@ -828,7 +828,7 @@ class PeripheralSpec<ID: Any> private constructor(
             if (isConnected) {
                 // This event will be ignored by already connected clients, but can re-connect
                 // a disconnected client, if not closed.
-                // TODO Is this re-connection intended behavior?
+                connectionsCount += 1
                 _events.emit(ConnectionStateChanged(ConnectionState.Connected))
                 return@also
             }
