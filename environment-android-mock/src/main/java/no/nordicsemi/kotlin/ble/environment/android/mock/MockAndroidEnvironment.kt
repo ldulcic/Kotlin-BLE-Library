@@ -142,7 +142,7 @@ sealed class MockAndroidEnvironment(
     // TODO add the issue when Samsung S8 fails PHY update, tested with Memfault.
     // This issue can be workaround by delaying service discovery (?) and waiting
     // until the PHY request completes. It works in nRF Connect when SD is triggered manually.
-    val advertiser: MockAdvertiser = error("Not supported"),
+    val advertiser: MockAdvertiser = { _, _, _ -> error("Not supported") },
     val scanner: MockScanner,
 ): AndroidEnvironment, MockEnvironment {
 
