@@ -370,9 +370,7 @@ class PeripheralSpecBuilderTest {
 
     @Test
     fun `simulated connection negotiates MTU not larger than the maximum`() {
-        val spec = connectableSpec {
-            highSpeed()
-        }
+        val spec = connectableSpec { highSpeed() }
         spec.simulateConnection(mtu = 1000)
         assertEquals(498, spec.mtu)
     }
