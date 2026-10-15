@@ -831,6 +831,19 @@ class PeripheralSpec<ID: Any> private constructor(
     }
 
     /**
+     * Ensures the link is authenticated, as the system does when a protected attribute is accessed.
+     *
+     * If the phone is not bonded, bonding is started and the operation is held until it finishes.
+     * The bonding level is not simulated: the link is authenticated if the bonding succeeds.
+     *
+     * @return `true` if the phone is bonded, so the access to the attribute is granted.
+     */
+    internal suspend fun requestAuthentication(): Boolean {
+        simulateBonding()
+        return _bondState.first { it != BondState.BONDING } == BondState.BONDED
+    }
+
+    /**
      * Simulates the phone removing the bond information of the peripheral.
      *
      * The peripheral keeps its bond information ([peripheralHasBond]). The connection is terminated.

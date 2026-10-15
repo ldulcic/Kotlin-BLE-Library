@@ -87,8 +87,8 @@ class MockRemoteDescriptor(
             it == Permission.READ_ENCRYPTED_MITM
         }
         val status = when {
-            insecure ||
-                    authenticationRequired && peripheralSpec.isBonded -> null
+            insecure -> null
+            authenticationRequired && peripheralSpec.requestAuthentication() -> null
             authenticationRequired -> OperationStatus.InsufficientAuthentication
             else -> OperationStatus.ReadNotPermitted
         }
@@ -159,8 +159,8 @@ class MockRemoteDescriptor(
             it == Permission.WRITE_ENCRYPTED_MITM
         }
         val status = when {
-            insecure ||
-            authenticationRequired && peripheralSpec.isBonded -> null
+            insecure -> null
+            authenticationRequired && peripheralSpec.requestAuthentication() -> null
             authenticationRequired -> OperationStatus.InsufficientAuthentication
             else -> OperationStatus.WriteNotPermitted
         }
