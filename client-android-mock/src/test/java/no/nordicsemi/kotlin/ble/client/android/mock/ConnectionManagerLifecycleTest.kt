@@ -51,6 +51,7 @@ import no.nordicsemi.kotlin.ble.core.ConnectionState
 import no.nordicsemi.kotlin.ble.core.ConnectionState.Disconnected.Reason
 import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.Phy
+import no.nordicsemi.kotlin.ble.core.PhyInUse
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.exception.ManagerClosedException
 import org.jetbrains.annotations.Range
@@ -444,8 +445,7 @@ class ConnectionManagerLifecycleTest {
         // phy is a StateFlow derived from events, it is updated after connect() returns.
         runCurrent()
 
-        assertEquals(spec.phy, peripheral.phy.value?.txPhy)
-        assertEquals(spec.phy, peripheral.phy.value?.rxPhy)
+        assertEquals(spec.phy, peripheral.phy.value)
     }
 
     @Test
@@ -476,9 +476,9 @@ class ConnectionManagerLifecycleTest {
         // phy is a StateFlow derived from events, it is updated after connect() returns.
         runCurrent()
 
-        assertEquals(Phy.PHY_LE_CODED, spec.phy)
-        assertEquals(Phy.PHY_LE_CODED, peripheral.phy.value?.txPhy)
-        assertEquals(Phy.PHY_LE_CODED, peripheral.phy.value?.rxPhy)
+        val coded = PhyInUse(Phy.PHY_LE_CODED, Phy.PHY_LE_CODED)
+        assertEquals(coded, spec.phy)
+        assertEquals(coded, peripheral.phy.value)
     }
 
     @Test

@@ -114,7 +114,8 @@ import kotlin.uuid.Uuid
  * @property maxLlMtu The maximum Link Layer MTU (Maximum Transfer Unit used on Link Layer using
  * Data Length Extension (DLE)).
  * @property supportedPhy The set of supported PHYs.
- * @param isInitiallyConnected Whether the peripheral is initially connected.
+ * @param activePhy The PHYs (TX and RX) used by the connection the peripheral is initially connected with,
+ * or `null` if the peripheral is not initially connected.
  * @param isKnown Whether the peripheral has been scanned before and its address type is cached.
  * It is not possible to connect to an unknown device without scanning.
  * @param isBonded Whether the peripheral is bonded.
@@ -138,7 +139,7 @@ class PeripheralSpec<ID: Any> private constructor(
     val maxAttMtu: Int?,
     val maxLlMtu: Int?,
     val supportedPhy: Set<Phy>,
-    isInitiallyConnected: Boolean,
+    activePhy: PhyInUse?,
     isKnown: Boolean,
     isBonded: Boolean,
     internal val advertisingSets: List<MockAdvertisingSet>?,
@@ -295,7 +296,7 @@ class PeripheralSpec<ID: Any> private constructor(
      *
      * Calling [simulateReset] sets this value to 0.
      */
-    private var connectionsCount = if (isInitiallyConnected) 1 else 0
+    private var connectionsCount = if (activePhy != null) 1 else 0
         set(value) {
             field = value.coerceAtLeast(0)
 
@@ -307,14 +308,7 @@ class PeripheralSpec<ID: Any> private constructor(
                 connectionParameters = null
             } else if (mtu == null) {
                 // If first connection, set default parameters.
-                phy = Phy.PHY_LE_1M
-                mtu = ATT_MTU_DEFAULT
-                llMtu = LL_MTU_DEFAULT
-                connectionParameters = ConnectionParameters.Specified(
-                    connectionInterval = preferredConnectionInterval!!.first,
-                    latency = preferredSlaveLatency!!,
-                    supervisionTimeout = preferredSupervisionTimeout!!
-                )
+                setDefaultConnectionState(PhyInUse.PHY_LE_1M)
             }
         }
 
@@ -330,9 +324,32 @@ class PeripheralSpec<ID: Any> private constructor(
     var llMtu: Int? = null
         private set
 
-    /** The currently used PHY. */
-    var phy: Phy? = null
+    /**
+     * The PHYs currently used by the connection: TX is the PHY used by the central to transmit,
+     * and RX is the PHY used to receive. They may differ.
+     */
+    var phy: PhyInUse? = null
         private set
+
+    init {
+        // The initial value of connectionsCount doesn't call its setter, so the state of the
+        // connection the peripheral is initially connected with is set here.
+        if (activePhy != null) {
+            setDefaultConnectionState(activePhy)
+        }
+    }
+
+    /** Sets the parameters of a new connection, which has just been established. */
+    private fun setDefaultConnectionState(phy: PhyInUse) {
+        this.phy = phy
+        this.mtu = ATT_MTU_DEFAULT
+        this.llMtu = LL_MTU_DEFAULT
+        this.connectionParameters = ConnectionParameters.Specified(
+            connectionInterval = preferredConnectionInterval!!.first,
+            latency = preferredSlaveLatency!!,
+            supervisionTimeout = preferredSupervisionTimeout!!
+        )
+    }
 
     /**
      * A flag indicating that the cached services are valid.
@@ -356,6 +373,8 @@ class PeripheralSpec<ID: Any> private constructor(
      * @param withResponse whether the operation requires a response (Write Request / Long Write,
      * or any Read operation). Must be `false` only for Write Command (fire-and-forget writes have
      * no response; there is no such thing as a "read without response").
+     * @param isFromPeripheral whether the data is sent by the peripheral (e.g. a notification), so
+     * it uses the RX PHY of the connection, instead of the TX PHY.
      * @return The estimated duration of the transfer.
      * @throws IllegalStateException if the peripheral is not connected.
      */
@@ -363,10 +382,12 @@ class PeripheralSpec<ID: Any> private constructor(
         value: ByteArray,
         isWrite: Boolean,
         withResponse: Boolean = true,
+        isFromPeripheral: Boolean = false,
     ): Duration {
         val mtu = checkNotNull(mtu) { "Peripheral not connected" }
         val llMtu = checkNotNull(this@PeripheralSpec.llMtu)
-        val phy = checkNotNull(phy)
+        // Data sent by the peripheral is received by the central, so it uses the RX PHY.
+        val phy = checkNotNull(phy).let { if (isFromPeripheral) it.rxPhy else it.txPhy }
         val connectionInterval = checkNotNull(connectionParameters).connectionIntervalMillis
 
         return when (withResponse) {
@@ -566,10 +587,13 @@ class PeripheralSpec<ID: Any> private constructor(
      *
      * A manager registered for connection event will be notified.
      *
-     * @param phy The PHY used to connect to the peripheral.
+     * @param phy The PHY used to connect to the peripheral. It must be supported by the
+     * peripheral, as it could not receive the connection request otherwise.
      * @param mtu The ATT MTU negotiated for the connection, defaults to the max ATT MTU
      * supported by the [PeripheralSpec].
      * @throws IllegalStateException if the peripheral is not connectable.
+     * @throws IllegalArgumentException if the PHY is not supported by the peripheral. The
+     * [PeripheralSpecEventHandler.onConnectionRequest] is not called then.
      */
     fun simulateConnection(
         phy: PrimaryPhy = PrimaryPhy.PHY_LE_1M,
@@ -578,6 +602,11 @@ class PeripheralSpec<ID: Any> private constructor(
         // Make sure the device is connectable.
         val maxAttMtu = this.maxAttMtu ?: return
         val maxLlMtu = this.maxLlMtu ?: return
+
+        // The peripheral can't receive a connection request sent on a PHY it doesn't support.
+        require(supportedPhy.contains(phy.toPhy())) {
+            "PHY ${phy.toPhy()} is not supported by the peripheral."
+        }
 
         // If another client is already connected, just increase the connections count.
         if (isConnected) {
@@ -589,11 +618,10 @@ class PeripheralSpec<ID: Any> private constructor(
         when (eventHandler.onConnectionRequest(phy)) {
             is ConnectionResult.Accept -> {
                 connectionsCount += 1
-                this.mtu = mtu.coerceIn(23, maxAttMtu)
+                // TODO The MTU can here be set to above Environment's max ATT MTU.
+                this.mtu = mtu.coerceIn(ATT_MTU_DEFAULT, maxAttMtu)
                 this.llMtu = maxLlMtu
-                if (supportedPhy.contains(phy.toPhy())) {
-                    this.phy = phy.toPhy()
-                } // else defaults to PHY LE 1M
+                this.phy = PhyInUse(phy.toPhy(), phy.toPhy())
             }
             else -> {
                 // Do nothing. Assume that the connection request times out.
@@ -660,7 +688,12 @@ class PeripheralSpec<ID: Any> private constructor(
 
         // Notify clients that the value has changed.
         launchShared {
-            val transferDuration = estimateTransferDuration(value, isWrite = true, withResponse = false)
+            val transferDuration = estimateTransferDuration(
+                value = value,
+                isWrite = true,
+                withResponse = false,
+                isFromPeripheral = true,
+            )
             delay(transferDuration)
 
             // If any client is still connected, emit the event.
@@ -937,7 +970,7 @@ class PeripheralSpec<ID: Any> private constructor(
 
                 ConnectionResult.Accept -> {
                     connectionsCount += 1
-                    this@PeripheralSpec.phy = phy.toPhy()
+                    this@PeripheralSpec.phy = PhyInUse(phy.toPhy(), phy.toPhy())
                     this@PeripheralSpec.llMtu = maxSupportedLlMtu
                     // TODO set L2CAP MTU to max supported value
                     // Note: onConnectionRequest callback can request MTU, bonding or PHY update.
@@ -1161,10 +1194,12 @@ class PeripheralSpec<ID: Any> private constructor(
          */
         // TODO PHY option is ignored. This could be use to improve estimating transfer duration.
         suspend fun setPreferredPhy(txPhy: Phy, rxPhy: Phy, phyOptions: PhyOption) {
+            val requestedPhy = PhyInUse(txPhy, rxPhy)
+
             // If the requested PHY is already in use, just emit it.
             // The collector is waiting for the PhyChanged event.
-            if (this@PeripheralSpec.phy == txPhy) {
-                _events.emit(PhyChanged(PhyInUse(txPhy, rxPhy)))
+            if (this@PeripheralSpec.phy == requestedPhy) {
+                _events.emit(PhyChanged(requestedPhy))
                 return
             }
 
@@ -1175,8 +1210,8 @@ class PeripheralSpec<ID: Any> private constructor(
 
             // Check if the peripheral is still connected.
             if (isConnected) {
-                this@PeripheralSpec.phy = txPhy
-                _events.emit(PhyChanged(PhyInUse(txPhy, rxPhy)))
+                this@PeripheralSpec.phy = requestedPhy
+                _events.emit(PhyChanged(requestedPhy))
             }
         }
 
@@ -1185,7 +1220,7 @@ class PeripheralSpec<ID: Any> private constructor(
          */
         suspend fun readPhy() {
             val phy = phy ?: return
-            _events.emit(PhyChanged(PhyInUse(phy, phy)))
+            _events.emit(PhyChanged(phy))
         }
 
         /**
@@ -1237,7 +1272,7 @@ class PeripheralSpec<ID: Any> private constructor(
         private var maxAttMtu: Int? = null
         private var maxL2capMtu: Int? = null
         private var supportedPhy: MutableSet<Phy> = mutableSetOf(Phy.PHY_LE_1M)
-        private var isInitiallyConnected: Boolean = false
+        private var activePhy: PhyInUse? = null
         private var isKnown: Boolean = false
         private var isBonded: Boolean = false
         private var isServiceCacheValid: Boolean = false
@@ -1444,11 +1479,15 @@ class PeripheralSpec<ID: Any> private constructor(
          * @param preferredSupervisionTimeout Supervision timeout in 10 ms units. Valid range
          * is from 10 (0.1s) to 3200 (32s). Default is 400 (4 s).
          * @param maxAttMtu The maximum supported ATT MTU (Maximum Transfer Unit).
-         * This value must be in range 23..517.
+         * This value must be in range 23..517. The actual MTU for the connection will be the
+         * calculated using `min(maxAttMtu, environment.maxAttMtu)`.
          * @param maxL2capMtu The maximum supported L2CAP MTU (Maximum Transfer Unit used on L2CAP
          * Layer using Data Length Extension (DLE)). This value must be in range 27..251.
          * @param isPhyLe2MSupported Whether the device supports PHY LE 2M.
          * @param isPhyCodedSupported Whether the device supports PHY LE Coded.
+         * @param activePhy The PHYs (TX and RX) used by the existing connection. Both must be
+         * supported, so to use LE 2M or LE Coded set [isPhyLe2MSupported] or [isPhyCodedSupported] too.
+         * Ignored if the peripheral is out of range, as it is not connected then.
          * @param isBonded Whether the peripheral is bonded.
          * @param eventHandler The event handler that will be called for every event emulating
          * a real peripheral.
@@ -1468,6 +1507,7 @@ class PeripheralSpec<ID: Any> private constructor(
             maxL2capMtu: @Range(from = 27L, to = 251L) Int = 27,
             isPhyLe2MSupported: Boolean = false,
             isPhyCodedSupported: Boolean = false,
+            activePhy: PhyInUse = PhyInUse.PHY_LE_1M,
             isBonded: Boolean = false,
             eventHandler: PeripheralSpecEventHandler,
             actualServices: (MockServerScope.() -> Unit)? = null,
@@ -1493,7 +1533,9 @@ class PeripheralSpec<ID: Any> private constructor(
             this.isServiceCacheValid = actualServices == null
             this.isKnown = true
             this.isBonded = isBonded
-            this.isInitiallyConnected = proximity != Proximity.OUT_OF_RANGE
+            // Note: The PHY here may be unsupported. This is checked in build(), as
+            // `highSpeed` may be called later and add supported PHYs.
+            this.activePhy = activePhy
         }
 
         /**
@@ -1572,7 +1614,14 @@ class PeripheralSpec<ID: Any> private constructor(
             maxAttMtu = maxAttMtu,
             maxLlMtu = maxL2capMtu,
             supportedPhy = supportedPhy,
-            isInitiallyConnected = isInitiallyConnected,
+            activePhy = activePhy
+                ?.also {
+                    require(it.txPhy in supportedPhy && it.rxPhy in supportedPhy) {
+                        "Active PHY ($it) is not supported by the peripheral."
+                    }
+                }
+                // A peripheral that is out of range can't be connected.
+                ?.takeIf { proximity != Proximity.OUT_OF_RANGE },
             isKnown = isKnown,
             isBonded = isBonded,
             advertisingSets = advertisingSets,
