@@ -51,7 +51,6 @@ import no.nordicsemi.kotlin.ble.core.OperationStatus
 import no.nordicsemi.kotlin.ble.core.Permission
 import no.nordicsemi.kotlin.ble.core.and
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -144,7 +143,6 @@ class GattSubscriptionTest {
     }
 
     @Test
-    @Ignore("simulateValueUpdate does not truncate notifications to MTU - 3.")
     fun `notification longer than MTU - 3 is truncated`() = runTest {
         withTimeout(10.seconds) {
             val fixture = notifyingFixture()
@@ -156,6 +154,67 @@ class GattSubscriptionTest {
             gattSettle()
 
             assertContentEquals(gattBytes(20), values.single())
+        }
+    }
+
+    @Test
+    fun `notification of exactly MTU - 3 bytes is not truncated`() = runTest {
+        withTimeout(10.seconds) {
+            val fixture = notifyingFixture()
+            val values = mutableListOf<ByteArray>()
+            collect(fixture.characteristic(), values)
+
+            fixture.spec.simulateValueUpdate(handle, gattBytes(20))
+            gattSettle()
+
+            assertContentEquals(gattBytes(20), values.single())
+        }
+    }
+
+    @Test
+    fun `notification limit follows the negotiated MTU`() = runTest {
+        withTimeout(10.seconds) {
+            val fixture = notifyingFixture(maxAttMtu = 247)
+            val values = mutableListOf<ByteArray>()
+            collect(fixture.characteristic(), values)
+
+            // The MTU is 247, so a notification has up to 244 bytes.
+            fixture.spec.simulateValueUpdate(handle, gattBytes(244))
+            fixture.spec.simulateValueUpdate(handle, gattBytes(250))
+            gattSettle()
+
+            assertEquals(listOf(244, 244), values.map { it.size })
+        }
+    }
+
+    @Test
+    fun `notification is never longer than the maximum attribute value of 512 bytes`() = runTest {
+        withTimeout(10.seconds) {
+            // With the MTU of 517 a notification could carry 514 bytes.
+            val fixture = notifyingFixture(maxAttMtu = 517)
+            val values = mutableListOf<ByteArray>()
+            collect(fixture.characteristic(), values)
+
+            fixture.spec.simulateValueUpdate(handle, gattBytes(600))
+            gattSettle()
+
+            assertEquals(512, values.single().size)
+        }
+    }
+
+    @Test
+    fun `truncating a notification does not change the value given by the caller`() = runTest {
+        withTimeout(10.seconds) {
+            val fixture = notifyingFixture()
+            val values = mutableListOf<ByteArray>()
+            collect(fixture.characteristic(), values)
+
+            val value = gattBytes(30)
+            fixture.spec.simulateValueUpdate(handle, value)
+            gattSettle()
+
+            assertEquals(30, value.size)
+            assertEquals(20, values.single().size)
         }
     }
 

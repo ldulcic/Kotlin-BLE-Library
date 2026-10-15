@@ -729,6 +729,10 @@ class PeripheralSpec<ID: Any> private constructor(
      *
      * This will notify all connected clients that the value has changed.
      *
+     * A notification or indication carries at most ATT MTU - 3 bytes, so a longer value is
+     * truncated to that length, as a real peripheral would do. The MTU is the one of the connection
+     * when this method is called.
+     *
      * The *handle number* is returned when creating the characteristic using
      * [PeripheralSpec.Builder.connectable] from [ServiceScope.Characteristic].
      *
@@ -738,10 +742,16 @@ class PeripheralSpec<ID: Any> private constructor(
     fun simulateValueUpdate(handle: Int, value: ByteArray) {
         if (!isConnected) return
 
+        // Bluetooth Core Specification 6.2, Vol 3 (Host), Part F (ATT), 3.4.7.1 Handle Value
+        // Notification: the value is truncated to ATT_MTU - 3 bytes (opcode and handle take 3).
+        // The maximum length of an attribute value is 512 bytes.
+        val maxLength = min(checkNotNull(mtu) - 3, 512)
+        val notifiedValue = value.take(maxLength).toByteArray()
+
         // Notify clients that the value has changed.
         launchShared {
             val transferDuration = estimateTransferDuration(
-                value = value,
+                value = notifiedValue,
                 isWrite = true,
                 withResponse = false,
                 isFromPeripheral = true,
@@ -750,7 +760,7 @@ class PeripheralSpec<ID: Any> private constructor(
 
             // If any client is still connected, emit the event.
             if (isConnected) {
-                _events.emit(CharacteristicChanged(handle, value))
+                _events.emit(CharacteristicChanged(handle, notifiedValue))
             }
         }
     }
