@@ -125,7 +125,6 @@ class ConnectionPhyTest {
     }
 
     @Test
-    @Ignore("setPreferredPhy ignores the PHYs supported by the peripheral and the phone.")
     fun `preferred phy not supported by the peripheral is not applied`() = runTest {
         val peripheral = connect(spec(supports2M = false))
 
@@ -148,7 +147,6 @@ class ConnectionPhyTest {
     }
 
     @Test
-    @Ignore("setPreferredPhy ignores the PHYs supported by the peripheral and the phone.")
     fun `preferred phy not supported by the phone hardware is not applied`() = runTest {
         // Android 8+, but the phone does not support LE 2M.
         val environment = MockAndroidEnvironment.Api31(isLe2MPhySupported = false)

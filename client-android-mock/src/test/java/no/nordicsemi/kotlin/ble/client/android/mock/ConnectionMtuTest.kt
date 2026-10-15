@@ -125,7 +125,6 @@ class ConnectionMtuTest {
     }
 
     @Test
-    @Ignore("MockAndroidEnvironment.Api19() cannot be constructed (default advertiser throws), and requestMtu ignores the environment cap.")
     fun `mtu is capped by the maximum supported by the environment`() = runTest {
         // Android 4.4 supports only the default MTU.
         val peripheral = connect(spec(maxAttMtu = 517), environment = MockAndroidEnvironment.Api19())
