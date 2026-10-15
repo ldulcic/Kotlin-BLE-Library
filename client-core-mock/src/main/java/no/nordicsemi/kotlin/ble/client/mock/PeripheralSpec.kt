@@ -914,9 +914,13 @@ class PeripheralSpec<ID: Any> private constructor(
     ) {
         // TODO Validate parameters against preferred / possible parameters?
         connectionParameters?.connectionIntervalMillis?.let { connectionInterval ->
+            val epoch = connectionEpoch
             launchShared {
                 // Wait for few (old) connection intervals before applying new parameters.
                 delay(connectionInterval.milliseconds * delay)
+
+                // The connection could have ended in the meantime.
+                if (epoch != connectionEpoch) return@launchShared
 
                 connectionParameters = parameters
                 _events.emit(ConnectionParametersChanged(parameters))
@@ -951,8 +955,12 @@ class PeripheralSpec<ID: Any> private constructor(
 
         // Wait for few connection intervals before applying new parameters.
         val connectionInterval = checkNotNull(connectionParameters).connectionIntervalMillis.milliseconds
+        val epoch = connectionEpoch
         launchShared {
             delay(connectionInterval * 2)
+
+            // The connection could have ended in the meantime. Its MTU must not leak to the next one.
+            if (epoch != connectionEpoch) return@launchShared
 
             this@PeripheralSpec.mtu = newMtu
             _events.emit(MtuChanged(newMtu))

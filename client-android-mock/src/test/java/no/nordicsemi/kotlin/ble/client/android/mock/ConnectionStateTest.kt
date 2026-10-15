@@ -46,10 +46,12 @@ import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.mock.AddressType
 import no.nordicsemi.kotlin.ble.client.mock.DisconnectionReason
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
+import no.nordicsemi.kotlin.ble.core.WriteType
 import no.nordicsemi.kotlin.ble.client.mock.ConnectionResult
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpecEventHandler
 import no.nordicsemi.kotlin.ble.client.mock.Proximity
+import no.nordicsemi.kotlin.ble.core.ConnectionParameters
 import no.nordicsemi.kotlin.ble.core.ConnectionState
 import no.nordicsemi.kotlin.ble.core.ConnectionState.Disconnected.Reason
 import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
@@ -58,6 +60,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -556,4 +559,56 @@ class ConnectionStateTest {
         assertFalse(peripheral.isConnected)
         assertIs<ConnectionState.Disconnected>(peripheral.state.value)
     }
+
+    @Test
+    fun `connecting again after cancelling a connection right after it was accepted`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = PeripheralSpec.simulatePeripheral(identifier = ADDRESS, addressType = AddressType.PUBLIC) {
+            connectable(name = "Device", maxAttMtu = 247, eventHandler = requests) {}
+            advertising(
+                parameters = LegacyAdvertisingSetParameters(connectable = true, interval = 100.milliseconds),
+            ) {
+                CompleteLocalName("Device")
+            }
+        }
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        val connecting = backgroundScope.launch {
+            manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+        }
+        // Cancel as soon as the peripheral accepts the connection, before the MTU is negotiated.
+        while (requests.count == 0) {
+            advanceTimeBy(1.milliseconds)
+        }
+        connecting.cancel()
+        // The MTU request of the cancelled connection is due after a few connection intervals.
+        settle()
+
+        manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+
+        assertEquals(ConnectionState.Connected, peripheral.state.value)
+        assertNotNull(spec.connectionParameters, "A new connection has connection parameters")
+        // The MTU is negotiated on the new connection.
+        assertEquals(247, peripheral.maximumWriteValueLength(WriteType.WITHOUT_RESPONSE) + 3)
+        assertEquals(247, spec.mtu)
+    }
+
+    @Test
+    fun `connection parameters requested before disconnecting do not apply to the next connection`() = runTest {
+        val spec = spec()
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        val initial = peripheral.connectionParameters.value
+        spec.simulateConnectionParametersRequest(
+            ConnectionParameters.Specified(connectionInterval = 80, latency = 4, supervisionTimeout = 1000)
+        )
+        peripheral.disconnect()
+        settle()
+
+        manager.connect(peripheral)
+
+        assertEquals(initial, peripheral.connectionParameters.value)
+    }
 }
+
