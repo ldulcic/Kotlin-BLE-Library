@@ -456,7 +456,8 @@ open class Peripheral(
                                     // ^ throws TimeoutCancellationException("Timed out immediately")!!!
                                 }
                             }
-                            check(options.retry > 0) {
+                            // Do not try again when the user has disconnected, i.e. cancelled the connection.
+                            check(options.retry > 0 && !state.isUserInitiated) {
                                 logger?.warn(Layer.GAP) { "Connection attempt failed (reason: $reason)" }
                                 _state.update { state }
                                 throw ConnectionFailedException(reason)

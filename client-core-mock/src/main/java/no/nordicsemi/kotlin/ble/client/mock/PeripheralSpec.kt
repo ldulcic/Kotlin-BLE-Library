@@ -966,10 +966,13 @@ class PeripheralSpec<ID: Any> private constructor(
     /**
      * Initiates a mock GATT connection to the peripheral.
      *
-     * This method awaits first connectable advertisement from the given flow of advertisements
-     * and then simulates connection by calling [Api.connect].
+     * This method does not wait for the connection: it starts it and returns the [Api] of the
+     * client, like `connectGatt()` does on a phone. The connection awaits first connectable
+     * advertisement from the given flow of advertisements, and then is simulated by calling
+     * [Api.connect]. The client is notified with an event. The attempt can be cancelled with
+     * [Api.disconnect] and [Api.close].
      *
-     * If a peripheral is already connected, it just emits the connection event immediately.
+     * If a peripheral is already connected, it just emits the connection event.
      *
      * @param environment The mock environment.
      * @param autoConnect Whether to use auto-connect mode.
@@ -979,7 +982,7 @@ class PeripheralSpec<ID: Any> private constructor(
      * events meant only for this client, see [Api]. The events for all the clients are in [events].
      * @return The mock GATT object.
      */
-    internal suspend fun connectGatt(
+    internal fun connectGatt(
         environment: MockEnvironment,
         autoConnect: Boolean,
         autoMtu: Boolean,
@@ -992,59 +995,7 @@ class PeripheralSpec<ID: Any> private constructor(
             useEnvironment(environment)
         }
         return Api(environment, managerScope, clientEvents).also { gatt ->
-            // If the mock peripheral is already connected (to the phone) and another
-            // (virtual) client (that is Peripheral instance) tries to connect to it,
-            // just notify about the success.
-            if (isConnected) {
-                // This event will be ignored by already connected clients, but can re-connect
-                // a disconnected client, if not closed.
-                connectionsCount += 1
-                gatt.holdConnection()
-                if (autoConnect) {
-                    gatt.reconnectOnLinkLoss(advertisements, autoMtu)
-                }
-                clientEvents.emit(ConnectionStateChanged(ConnectionState.Connected))
-                return@also
-            }
-
-            // Android does not allow to create an auto-connection to a peripheral with RPA
-            // if the device is not bonded.
-            // Note: If a device is not known (has not been scanned before), Android
-            //       assumes PUBLIC address type.
-            // Note 2: On iOS it is not possible to get a peripheral by Device Address at all.
-            //         Devices must be scanned so that the Identifier is known.
-            if (autoConnect && !isBonded && isKnown && addressType == AddressType.RANDOM_PRIVATE_RESOLVABLE) {
-                // Some Android devices return error 133, newer ones 135.
-                // This event is later translated to UnsupportedAddress.
-                clientEvents.emit(ConnectionStateChanged(ConnectionState.Disconnected(Reason.Unknown(135))))
-                return@also
-            }
-
-            // If a device was not scanned before, Android assumes it has PUBLIC address type.
-            // Skip listening for advertisements if the spec has different address type.
-            // TODO Does iOS behave the same way?
-            val assumedPublicAddress = !isKnown
-            if (assumedPublicAddress && addressType != AddressType.PUBLIC) {
-                return@also
-            }
-
-            // With auto-connect the system keeps connecting, also when the link is lost later.
-            if (autoConnect) {
-                gatt.reconnectOnLinkLoss(advertisements, autoMtu)
-            }
-
-            // Connection Request is sent as a response to a connectable advertisement.
-            // Note: The advertisements flow is not filtered by the PHYs supported by the phone,
-            // so a device advertising on a PHY the phone can't receive must be skipped here,
-            // just like the scanner does.
-            val advertisement = advertisements.first { scanResult ->
-                scanResult.peripheralSpec.identifier == identifier &&
-                        scanResult.isConnectable &&
-                        environment.canReceive(scanResult)
-            }
-
-            // Note: Ignoring "preferred PHY" set by user. Choosing the primary PHY of scanned packet.
-            gatt.connect(advertisement.primaryPhy, autoMtu)
+            gatt.startConnecting(autoConnect, autoMtu, advertisements)
         }
     }
 
@@ -1086,6 +1037,87 @@ class PeripheralSpec<ID: Any> private constructor(
             .filterIsInstance<ServicesChanged>()
             .onEach { cachedServices = null }
             .launchIn(managerScope)
+
+        /** The job establishing the connection, see [startConnecting]. */
+        private var connection: Job? = null
+
+        /**
+         * Starts connecting to the peripheral, without waiting for the result.
+         *
+         * @param autoConnect Whether to use auto-connect mode.
+         * @param autoMtu Whether the MTU should be automatically negotiated upon connection.
+         * @param advertisements A flow of advertisements emitted by the mock advertiser.
+         */
+        internal fun startConnecting(
+            autoConnect: Boolean,
+            autoMtu: Boolean,
+            advertisements: Flow<MockScanResult<*>>,
+        ) {
+            connection = managerScope.launch {
+                establishConnection(autoConnect, autoMtu, advertisements)
+            }
+        }
+
+        /** Waits for the peripheral to accept the connection, and reports the result. */
+        private suspend fun establishConnection(
+            autoConnect: Boolean,
+            autoMtu: Boolean,
+            advertisements: Flow<MockScanResult<*>>,
+        ) {
+            // If the mock peripheral is already connected (to the phone) and another
+            // (virtual) client (that is Peripheral instance) tries to connect to it,
+            // just notify about the success.
+            if (isConnected) {
+                // This event will be ignored by already connected clients, but can re-connect
+                // a disconnected client, if not closed.
+                connectionsCount += 1
+                holdConnection()
+                if (autoConnect) {
+                    reconnectOnLinkLoss(advertisements, autoMtu)
+                }
+                clientEvents.emit(ConnectionStateChanged(ConnectionState.Connected))
+                return
+            }
+
+            // Android does not allow to create an auto-connection to a peripheral with RPA
+            // if the device is not bonded.
+            // Note: If a device is not known (has not been scanned before), Android
+            //       assumes PUBLIC address type.
+            // Note 2: On iOS it is not possible to get a peripheral by Device Address at all.
+            //         Devices must be scanned so that the Identifier is known.
+            if (autoConnect && !isBonded && isKnown && addressType == AddressType.RANDOM_PRIVATE_RESOLVABLE) {
+                // Some Android devices return error 133, newer ones 135.
+                // This event is later translated to UnsupportedAddress.
+                clientEvents.emit(ConnectionStateChanged(ConnectionState.Disconnected(Reason.Unknown(135))))
+                return
+            }
+
+            // If a device was not scanned before, Android assumes it has PUBLIC address type.
+            // Skip listening for advertisements if the spec has different address type.
+            // TODO Does iOS behave the same way?
+            val assumedPublicAddress = !isKnown
+            if (assumedPublicAddress && addressType != AddressType.PUBLIC) {
+                return
+            }
+
+            // With auto-connect the system keeps connecting, also when the link is lost later.
+            if (autoConnect) {
+                reconnectOnLinkLoss(advertisements, autoMtu)
+            }
+
+            // Connection Request is sent as a response to a connectable advertisement.
+            // Note: The advertisements flow is not filtered by the PHYs supported by the phone,
+            // so a device advertising on a PHY the phone can't receive must be skipped here,
+            // just like the scanner does.
+            val advertisement = advertisements.first { scanResult ->
+                scanResult.peripheralSpec.identifier == identifier &&
+                        scanResult.isConnectable &&
+                        environment.canReceive(scanResult)
+            }
+
+            // Note: Ignoring "preferred PHY" set by user. Choosing the primary PHY of scanned packet.
+            connect(advertisement.primaryPhy, autoMtu)
+        }
 
         /** The job observing the connection state, started for auto-connect connections. */
         private var autoReconnectMonitoring: Job? = null
@@ -1156,6 +1188,7 @@ class PeripheralSpec<ID: Any> private constructor(
         internal fun close() {
             cachedServices = null
             cacheMonitoring.cancel()
+            connection?.cancel()
             autoReconnectMonitoring?.cancel()
             reconnection?.cancel()
 
@@ -1241,11 +1274,20 @@ class PeripheralSpec<ID: Any> private constructor(
         /**
          * Simulates disconnecting from the peripheral.
          *
-         * @throws IllegalStateException when the device is not connected.
+         * If the client is only connecting, the attempt is cancelled.
          */
         suspend fun disconnect() = disconnect(Reason.Success)
 
         internal suspend fun disconnect(reason: Reason) {
+            // A client that holds no connection is connecting, or, with auto-connect, connecting
+            // again after the link was lost. Cancel the attempt, there is no link to terminate.
+            if (heldEpoch != connectionEpoch) {
+                connection?.cancel()
+                reconnection?.cancel()
+                clientEvents.emit(ConnectionStateChanged(ConnectionState.Disconnected(reason)))
+                return
+            }
+
             val connectionParameters =
                 checkNotNull(connectionParameters) { "Peripheral not connected." }
             val connectionInterval = connectionParameters.connectionIntervalMillis.milliseconds
