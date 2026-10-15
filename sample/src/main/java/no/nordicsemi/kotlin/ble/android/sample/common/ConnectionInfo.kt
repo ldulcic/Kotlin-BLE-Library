@@ -57,7 +57,9 @@ import no.nordicsemi.kotlin.ble.android.sample.graph.RssiGraph
 import no.nordicsemi.kotlin.ble.android.sample.graph.RssiGraphState
 import no.nordicsemi.kotlin.ble.android.sample.theme.AppTheme
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
+import no.nordicsemi.kotlin.ble.client.android.EncryptionState
 import no.nordicsemi.kotlin.ble.client.android.preview.PreviewPeripheral
+import no.nordicsemi.kotlin.ble.core.BondState
 import no.nordicsemi.kotlin.ble.core.ConnectionParameters
 import no.nordicsemi.kotlin.ble.core.ConnectionState
 import no.nordicsemi.kotlin.ble.core.Phy
@@ -109,6 +111,8 @@ fun ConnectionInfo(
     val mtu by peripheral.mtu.collectAsStateWithLifecycle()
     val phy by peripheral.phy.collectAsStateWithLifecycle()
     val parameters by peripheral.connectionParameters.collectAsStateWithLifecycle()
+    val bondState by peripheral.bondState.collectAsStateWithLifecycle()
+    val encryptionState by peripheral.encryptionState.collectAsStateWithLifecycle()
 
     Column(
         modifier = modifier,
@@ -127,8 +131,35 @@ fun ConnectionInfo(
             InfoChip("Interval", specified?.let { "${it.connectionIntervalMillis} ms" })
             InfoChip("Latency", specified?.latency?.toString())
             InfoChip("Timeout", specified?.let { "${it.supervisionTimeoutMillis} ms" })
+            InfoChip("Bond", bondState.format())
+            InfoChip("Encryption", encryptionState.format())
         }
     }
+}
+
+private fun BondState.format() = when (this) {
+    BondState.NONE -> "None"
+    BondState.BONDING -> "Bonding…"
+    BondState.BONDED -> "Bonded"
+}
+
+private fun EncryptionState.format(): String? = when (this) {
+    EncryptionState.Unknown -> null
+    EncryptionState.NotEncrypted -> "Not encrypted"
+    is EncryptionState.Encrypted -> buildString {
+        append(if (algorithm == EncryptionState.Algorithm.Unknown) "Encrypted" else algorithm.name)
+        keySize?.let { append(" · ${it * 8} bit") }
+    }
+    is EncryptionState.EncryptionFailed -> "Failed: ${reason.format()}"
+}
+
+private fun EncryptionState.Reason.format() = when (this) {
+    EncryptionState.Reason.Unknown -> "unknown"
+    is EncryptionState.Reason.ControllerError -> "controller error 0x%02X".format(status)
+    EncryptionState.Reason.LeEncryptionFailure -> "key missing"
+    EncryptionState.Reason.LeIncomingPairing,
+    EncryptionState.Reason.BrEdrIncomingPairing -> "peripheral paired again"
+    EncryptionState.Reason.BrEdrAuthenticationFailure -> "authentication failed"
 }
 
 private fun PhyInUse.format() =
