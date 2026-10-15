@@ -1,7 +1,6 @@
 package no.nordicsemi.kotlin.ble.core
 
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
@@ -112,11 +111,20 @@ class ConnectionParametersTest {
     }
 
     @Test
-    @Ignore("ConnectionParameters(Duration) truncates 7.5 ms to 7 ms and rejects the shortest valid interval.")
     fun `Duration constructor maps the shortest interval of 7_5 ms to 6 units`() {
         // 7.5 ms is the lowest interval allowed by the Bluetooth specification.
         val params = ConnectionParameters.Specified(7.5.milliseconds, 0, 1.seconds)
         assertEquals(6, params.connectionInterval)
+    }
+
+    @Test
+    fun `Duration constructor converts intervals that are not a multiple of 1_25 ms rounding down`() {
+        // 11 ms is 8.8 units.
+        assertEquals(8, ConnectionParameters.Specified(11.milliseconds, 0, 1.seconds).connectionInterval)
+        // 7.4 ms is 5.92 units, which is rounded down to 5, below the shortest interval.
+        assertFailsWith<IllegalArgumentException> {
+            ConnectionParameters.Specified(7.4.milliseconds, 0, 1.seconds)
+        }
     }
 
     @Test
