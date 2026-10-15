@@ -43,10 +43,12 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
+import no.nordicsemi.kotlin.ble.client.RemoteServices
 import no.nordicsemi.kotlin.ble.client.android.CentralManager.ConnectionOptions
 import no.nordicsemi.kotlin.ble.client.mock.AddressType
 import no.nordicsemi.kotlin.ble.client.mock.ConnectionResult
 import no.nordicsemi.kotlin.ble.client.mock.DisconnectionReason
+import no.nordicsemi.kotlin.ble.client.mock.MockServerScope
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpecEventHandler
 import no.nordicsemi.kotlin.ble.core.ConnectionState
@@ -62,6 +64,7 @@ import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -102,6 +105,7 @@ class ConnectionManagerLifecycleTest {
         isPhyLe2MSupported: Boolean = true,
         isPhyCodedSupported: Boolean = true,
         events: Events = Events(),
+        services: MockServerScope.() -> Unit = {},
     ): PeripheralSpec<String> = PeripheralSpec
         .simulatePeripheral(
             identifier = address,
@@ -112,8 +116,9 @@ class ConnectionManagerLifecycleTest {
                 maxAttMtu = maxAttMtu,
                 isPhyLe2MSupported = isPhyLe2MSupported,
                 isPhyCodedSupported = isPhyCodedSupported,
-                eventHandler = events
-            ) {}
+                eventHandler = events,
+                services = services,
+            )
             advertising(
                 parameters = LegacyAdvertisingSetParameters(connectable = true, interval = 100.milliseconds),
             ) {
@@ -310,7 +315,6 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("Closing a peripheral does not release its connection on the PeripheralSpec: the disconnection of one client reaches all the clients of the spec (shared event stream).")
     fun `closing the manager lets the device know that the client has disconnected`() = runTest {
         val events = Events()
         val spec = spec(events = events)
@@ -321,6 +325,121 @@ class ConnectionManagerLifecycleTest {
         runCurrent()
 
         assertFalse(spec.isConnected)
+        assertEquals(listOf<DisconnectionReason>(DisconnectionReason.TerminatePeerUser), events.connectionsLost)
+    }
+
+    @Test
+    fun `device stays connected to another manager when a manager is closed`() = runTest {
+        val events = Events()
+        val spec = spec(events = events)
+        val manager = newManager(spec)
+        val otherManager = newManager(spec)
+        manager.connect(checkNotNull(manager.getPeripheralById(ADDRESS)))
+        otherManager.connect(checkNotNull(otherManager.getPeripheralById(ADDRESS)))
+
+        manager.close()
+        runCurrent()
+
+        assertTrue(spec.isConnected)
+        assertTrue(events.connectionsLost.isEmpty())
+
+        // The device is told when the last client is gone.
+        otherManager.close()
+        runCurrent()
+
+        assertFalse(spec.isConnected)
+        assertEquals(1, events.connectionsLost.size)
+    }
+
+    @Test
+    fun `closing the manager after the client disconnected does not release the connection of another client`() = runTest {
+        val spec = spec()
+        val manager = newManager(spec)
+        val otherManager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        otherManager.connect(checkNotNull(otherManager.getPeripheralById(ADDRESS)))
+
+        peripheral.disconnect()
+        runCurrent()
+        manager.close()
+        runCurrent()
+
+        assertTrue(spec.isConnected)
+    }
+
+    @Test
+    fun `closing the manager after the connection ended does not release a new connection`() = runTest {
+        val spec = spec()
+        val manager = newManager(spec)
+        val otherManager = newManager(spec)
+        manager.connect(checkNotNull(manager.getPeripheralById(ADDRESS)))
+
+        // The device terminates the connection, and then another client connects.
+        spec.simulateDisconnection()
+        runCurrent()
+        otherManager.connect(checkNotNull(otherManager.getPeripheralById(ADDRESS)))
+        runCurrent()
+
+        manager.close()
+        runCurrent()
+
+        assertTrue(spec.isConnected)
+    }
+
+    // ---- Events of a single client ----
+
+    @Test
+    fun `disconnecting one client does not disconnect the other clients`() = runTest {
+        val spec = spec()
+        val manager = newManager(spec)
+        val otherManager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        val otherPeripheral = checkNotNull(otherManager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        otherManager.connect(otherPeripheral)
+
+        peripheral.disconnect()
+        runCurrent()
+
+        assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(ConnectionState.Connected, otherPeripheral.state.value)
+    }
+
+    @Test
+    fun `service discovery is reported only to the client that requested it`() = runTest {
+        val spec = spec { GenericAttributeService() }
+        val manager = newManager(spec)
+        val otherManager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        val otherPeripheral = checkNotNull(otherManager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        otherManager.connect(otherPeripheral)
+
+        val services = peripheral.services()
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        assertIs<RemoteServices.Discovered>(services.value)
+        assertEquals(RemoteServices.Unknown, otherPeripheral.services().value)
+    }
+
+    @Test
+    fun `link loss is reported to all the clients`() = runTest {
+        val spec = spec()
+        val manager = newManager(spec)
+        val otherManager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        val otherPeripheral = checkNotNull(otherManager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        otherManager.connect(otherPeripheral)
+
+        spec.simulateReset()
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertIs<ConnectionState.Disconnected>(otherPeripheral.state.value)
     }
 
     // ---- Several peripherals and managers ----

@@ -308,6 +308,13 @@ class PeripheralSpec<ID: Any> private constructor(
         get() = connectionsCount > 0
 
     /**
+     * The number of times all the connections ended, i.e. [connectionsCount] was 0.
+     *
+     * A client that was connected in an earlier epoch has no connection to release.
+     */
+    private var connectionEpoch = 0
+
+    /**
      * Number of active virtual connections to the peripheral.
      *
      * This is used to simulate multiple clients connecting to the same peripheral.
@@ -320,6 +327,8 @@ class PeripheralSpec<ID: Any> private constructor(
 
             // If no more connections, reset connection parameters.
             if (field == 0) {
+                // All the connections ended, also those that did not disconnect themselves.
+                connectionEpoch++
                 phy = null
                 mtu = null
                 llMtu = null
@@ -907,6 +916,8 @@ class PeripheralSpec<ID: Any> private constructor(
      * @param autoConnect Whether to use auto-connect mode.
      * @param advertisements A flow of advertisements emitted by the mock advertiser.
      * @param managerScope The scope of the mock central manager connecting to the peripheral.
+     * @param clientEvents The events of the client connecting to the peripheral. They get the
+     * events meant only for this client, see [Api]. The events for all the clients are in [events].
      * @return The mock GATT object.
      */
     internal suspend fun connectGatt(
@@ -916,11 +927,12 @@ class PeripheralSpec<ID: Any> private constructor(
         opportunistic: Boolean,
         advertisements: Flow<MockScanResult<*>>,
         managerScope: CoroutineScope,
+        clientEvents: MutableSharedFlow<GattEvent>,
     ): Api {
         if (simulationEnvironment == null) {
             useEnvironment(environment)
         }
-        return Api(environment, managerScope).also { gatt ->
+        return Api(environment, managerScope, clientEvents).also { gatt ->
             // If the mock peripheral is already connected (to the phone) and another
             // (virtual) client (that is Peripheral instance) tries to connect to it,
             // just notify about the success.
@@ -928,10 +940,11 @@ class PeripheralSpec<ID: Any> private constructor(
                 // This event will be ignored by already connected clients, but can re-connect
                 // a disconnected client, if not closed.
                 connectionsCount += 1
+                gatt.holdConnection()
                 if (autoConnect) {
                     gatt.reconnectOnLinkLoss(advertisements, autoMtu)
                 }
-                _events.emit(ConnectionStateChanged(ConnectionState.Connected))
+                clientEvents.emit(ConnectionStateChanged(ConnectionState.Connected))
                 return@also
             }
 
@@ -944,7 +957,7 @@ class PeripheralSpec<ID: Any> private constructor(
             if (autoConnect && !isBonded && isKnown && addressType == AddressType.RANDOM_PRIVATE_RESOLVABLE) {
                 // Some Android devices return error 133, newer ones 135.
                 // This event is later translated to UnsupportedAddress.
-                _events.emit(ConnectionStateChanged(ConnectionState.Disconnected(Reason.Unknown(135))))
+                clientEvents.emit(ConnectionStateChanged(ConnectionState.Disconnected(Reason.Unknown(135))))
                 return@also
             }
 
@@ -994,11 +1007,16 @@ class PeripheralSpec<ID: Any> private constructor(
      * so they don't depend on other managers simulating the same peripheral.
      *
      * @param managerScope The scope of the mock central manager that created the connection.
+     * @param clientEvents The events of this client. The events concerning the whole connection are
+     * emitted by the peripheral to all its clients (see [events]). The ones that are the result of
+     * an action of this client, and concern only this client, like its connection, disconnection or
+     * service discovery, are emitted here, so that other clients do not receive them.
      * @hide
      */
     inner class Api internal constructor(
         val environment: MockEnvironment,
         private val managerScope: CoroutineScope,
+        private val clientEvents: MutableSharedFlow<GattEvent>,
     ) {
         /**
          * A job for observing [ServicesChanged] events, that invalidates the service cache.
@@ -1029,7 +1047,7 @@ class PeripheralSpec<ID: Any> private constructor(
          */
         internal fun reconnectOnLinkLoss(advertisements: Flow<MockScanResult<*>>, autoMtu: Boolean) {
             autoReconnectMonitoring?.cancel()
-            autoReconnectMonitoring = events
+            autoReconnectMonitoring = clientEvents
                 .filterIsInstance<ConnectionStateChanged>()
                 .map { it.newState }
                 .filterIsInstance<ConnectionState.Disconnected>()
@@ -1058,12 +1076,39 @@ class PeripheralSpec<ID: Any> private constructor(
             } while (!connect(advertisement.primaryPhy, autoMtu))
         }
 
-        /** Closes the GATT connection. */
+        /**
+         * The epoch of the connection this client holds, or `null` if it holds none.
+         *
+         * @see connectionEpoch
+         */
+        private var heldEpoch: Int? = null
+
+        /** Marks that this client has been counted in [connectionsCount]. */
+        internal fun holdConnection() {
+            heldEpoch = connectionEpoch
+        }
+
+        /**
+         * Closes the GATT connection.
+         *
+         * Like `BluetoothGatt.close()`, it also ends the connection if it is still established,
+         * without waiting for the link to be terminated, and the peripheral is notified.
+         */
         internal fun close() {
             cachedServices = null
             cacheMonitoring.cancel()
             autoReconnectMonitoring?.cancel()
             reconnection?.cancel()
+
+            // Release the connection, unless it has already ended (disconnect, link loss, reset).
+            if (heldEpoch == connectionEpoch) {
+                heldEpoch = null
+                connectionsCount -= 1
+                if (connectionsCount == 0) {
+                    eventHandler?.onConnectionLost(DisconnectionReason.TerminatePeerUser)
+                }
+            }
+            heldEpoch = null
         }
 
         /**
@@ -1081,7 +1126,7 @@ class PeripheralSpec<ID: Any> private constructor(
         internal var cachedServices: List<RemoteService>? = when (isServiceCacheValid) {
             true -> services
             false -> this@PeripheralSpec.cachedServices
-        }?.map { MockRemoteService(this@PeripheralSpec, it, events) }
+        }?.map { MockRemoteService(this@PeripheralSpec, it, clientEvents) }
             private set
 
         /**
@@ -1110,6 +1155,7 @@ class PeripheralSpec<ID: Any> private constructor(
 
                 ConnectionResult.Accept -> {
                     connectionsCount += 1
+                    holdConnection()
                     // The connection is established on the PHY of the advertisement, unless
                     // it is not supported by both sides.
                     val connectionPhy = phy.toPhy().takeIf { isSupported(it, environment) } ?: Phy.PHY_LE_1M
@@ -1118,8 +1164,7 @@ class PeripheralSpec<ID: Any> private constructor(
                     // TODO set L2CAP MTU to max supported value
                     // Note: onConnectionRequest callback can request MTU, bonding or PHY update.
                     // TODO Make sure these requests are handled after state is reported
-                    // TODO This will re-connect all disconnected Peripheral instances.
-                    _events.emit(ConnectionStateChanged(ConnectionState.Connected))
+                    clientEvents.emit(ConnectionStateChanged(ConnectionState.Connected))
 
                     if (autoMtu) {
                         simulateMtuRequest(maxSupportedAttMtu)
@@ -1148,7 +1193,11 @@ class PeripheralSpec<ID: Any> private constructor(
             val eventHandler = checkNotNull(eventHandler)
 
             delay(connectionInterval)
-            _events.emit(ConnectionStateChanged(ConnectionState.Disconnected(reason)))
+
+            // The connection of this client is released below. The client closes the peripheral
+            // when it receives the event, which must not release it again.
+            heldEpoch = null
+            clientEvents.emit(ConnectionStateChanged(ConnectionState.Disconnected(reason)))
 
             // One virtual client disconnected.
             connectionsCount -= 1
@@ -1205,7 +1254,7 @@ class PeripheralSpec<ID: Any> private constructor(
                     delay(serviceDiscoveryDuration)
                     // TODO iOS returns only requested services. Filtering is also done later, but should be here?
                     // TODO iOS does not return Generic Access and Generic Attribute services. Filter out, or leave for the PeripheralSpec?
-                    val discoveredServices = services!!.map { MockRemoteService(this@PeripheralSpec, it, _events) }
+                    val discoveredServices = services!!.map { MockRemoteService(this@PeripheralSpec, it, clientEvents) }
                     // An empty result is a failure, so it's not cached.
                     if (discoveredServices.isNotEmpty()) {
                         isServiceCacheValid = true
@@ -1226,7 +1275,7 @@ class PeripheralSpec<ID: Any> private constructor(
                     // Let's say the failure happens after some delay.
                     delay(connectionInterval * 2)
                     // No exact error is reported, just like an empty result.
-                    _events.emit(ServiceDiscoveryFailed(RemoteServices.Failed.Reason.EmptyResult))
+                    clientEvents.emit(ServiceDiscoveryFailed(RemoteServices.Failed.Reason.EmptyResult))
                 }
             }
             return true
@@ -1242,8 +1291,8 @@ class PeripheralSpec<ID: Any> private constructor(
         private suspend fun emitServicesDiscovered(services: List<RemoteService>) {
             when {
                 services.isEmpty() ->
-                    _events.emit(ServiceDiscoveryFailed(RemoteServices.Failed.Reason.EmptyResult))
-                else -> _events.emit(ServicesDiscovered(services))
+                    clientEvents.emit(ServiceDiscoveryFailed(RemoteServices.Failed.Reason.EmptyResult))
+                else -> clientEvents.emit(ServicesDiscovered(services))
             }
         }
 
