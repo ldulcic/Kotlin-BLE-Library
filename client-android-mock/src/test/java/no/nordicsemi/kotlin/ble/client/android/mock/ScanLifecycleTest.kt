@@ -37,6 +37,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.test.runTest
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
 import no.nordicsemi.kotlin.ble.client.android.ConjunctionFilterScope
@@ -51,6 +53,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -295,7 +298,7 @@ class ScanLifecycleTest {
         val manager = CentralManager.mock(scope = backgroundScope)
         manager.close()
 
-        assertFailsWith<ManagerClosedException> { manager.scan() }
+        assertFailsWith<ManagerClosedException> { manager.scan().first() }
     }
 
     @Test
@@ -303,7 +306,7 @@ class ScanLifecycleTest {
         val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
         val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
 
-        assertFailsWith<BluetoothUnavailableException> { manager.scan() }
+        assertFailsWith<BluetoothUnavailableException> { manager.scan().first() }
     }
 
     @Test
@@ -311,7 +314,7 @@ class ScanLifecycleTest {
         val environment = MockAndroidEnvironment.Api37(isBluetoothSupported = false)
         val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
 
-        assertFailsWith<BluetoothUnavailableException> { manager.scan() }
+        assertFailsWith<BluetoothUnavailableException> { manager.scan().first() }
     }
 
     @Test
@@ -319,7 +322,7 @@ class ScanLifecycleTest {
         val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
         val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
         manager.simulatePeripherals(listOf(sensor()))
-        assertFailsWith<BluetoothUnavailableException> { manager.scan() }
+        assertFailsWith<BluetoothUnavailableException> { manager.scan().first() }
 
         environment.simulatePowerOn()
         val scan = collect(manager)
@@ -333,7 +336,7 @@ class ScanLifecycleTest {
         val environment = MockAndroidEnvironment.Api37(isBluetoothScanPermissionGranted = false)
         val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
 
-        assertFailsWith<SecurityException> { manager.scan() }
+        assertFailsWith<SecurityException> { manager.scan().first() }
     }
 
     @Test
@@ -341,7 +344,7 @@ class ScanLifecycleTest {
         val environment = MockAndroidEnvironment.Api37(isBluetoothScanPermissionGranted = false)
         val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
         manager.simulatePeripherals(listOf(sensor()))
-        assertFailsWith<SecurityException> { manager.scan() }
+        assertFailsWith<SecurityException> { manager.scan().first() }
 
         environment.isBluetoothScanPermissionGranted = true
         val scan = collect(manager)
@@ -376,6 +379,51 @@ class ScanLifecycleTest {
         advance(1.seconds)
 
         assertFalse(scan.results.isEmpty())
+    }
+
+    // ---- Errors are thrown on collection ----
+
+    @Test
+    fun `scan does not throw when the manager is closed until the flow is collected`() = runTest {
+        val manager = CentralManager.mock(scope = backgroundScope)
+        manager.close()
+
+        val flow = manager.scan()
+
+        assertFailsWith<ManagerClosedException> { flow.first() }
+    }
+
+    @Test
+    fun `scan errors can be handled with catch`() = runTest {
+        val manager = CentralManager.mock(scope = backgroundScope)
+        manager.close()
+        var error: Throwable? = null
+
+        manager.scan().catch { error = it }.toList()
+
+        assertIs<ManagerClosedException>(error)
+    }
+
+    @Test
+    fun `scan error of Bluetooth turned off can be handled with catch`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isBluetoothEnabled = false)
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+        var error: Throwable? = null
+
+        manager.scan().catch { error = it }.toList()
+
+        assertIs<BluetoothUnavailableException>(error)
+    }
+
+    @Test
+    fun `scan error of a missing permission can be handled with catch`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isBluetoothScanPermissionGranted = false)
+        val manager = CentralManager.mock(environment = environment, scope = backgroundScope)
+        var error: Throwable? = null
+
+        manager.scan().catch { error = it }.toList()
+
+        assertIs<SecurityException>(error)
     }
 
     // ---- Scanner failures ----
