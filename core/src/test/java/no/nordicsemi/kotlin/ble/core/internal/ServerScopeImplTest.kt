@@ -6,7 +6,6 @@ import no.nordicsemi.kotlin.ble.core.Permission
 import no.nordicsemi.kotlin.ble.core.and
 import no.nordicsemi.kotlin.ble.core.util.fromShortUuid
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -133,7 +132,6 @@ class ServerScopeImplTest {
     }
 
     @Test
-    @Ignore("Needs triage: handles start at 0 but ATT handle 0x0000 is reserved (Handle mirrors the Android instance id).")
     fun `no attribute uses reserved handle 0`() {
         // ATT handle 0x0000 is reserved and must not be used.
         val services = build {
