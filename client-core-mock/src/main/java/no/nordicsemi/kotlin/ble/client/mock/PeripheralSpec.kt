@@ -57,6 +57,8 @@ import no.nordicsemi.kotlin.ble.client.MtuChanged
 import no.nordicsemi.kotlin.ble.client.PhyChanged
 import no.nordicsemi.kotlin.ble.client.ReliableWriteCompleted
 import no.nordicsemi.kotlin.ble.client.RemoteService
+import no.nordicsemi.kotlin.ble.client.RemoteServices
+import no.nordicsemi.kotlin.ble.client.ServiceDiscoveryFailed
 import no.nordicsemi.kotlin.ble.client.RssiRead
 import no.nordicsemi.kotlin.ble.client.ServicesChanged
 import no.nordicsemi.kotlin.ble.client.ServicesDiscovered
@@ -1099,7 +1101,7 @@ class PeripheralSpec<ID: Any> private constructor(
 
             // Return cached services if available. Note, that the cache may be invalid.
             cachedServices?.let {
-                _events.emit(ServicesDiscovered(it))
+                emitServicesDiscovered(it)
                 return true
             }
 
@@ -1131,9 +1133,13 @@ class PeripheralSpec<ID: Any> private constructor(
                     delay(serviceDiscoveryDuration)
                     // TODO iOS returns only requested services. Filtering is also done later, but should be here?
                     // TODO iOS does not return Generic Access and Generic Attribute services. Filter out, or leave for the PeripheralSpec?
-                    isServiceCacheValid = true
-                    cachedServices = services!!.map { MockRemoteService(this@PeripheralSpec, it, _events) }
-                    _events.emit(ServicesDiscovered(cachedServices!!))
+                    val discoveredServices = services!!.map { MockRemoteService(this@PeripheralSpec, it, _events) }
+                    // An empty result is a failure, so it's not cached.
+                    if (discoveredServices.isNotEmpty()) {
+                        isServiceCacheValid = true
+                        cachedServices = discoveredServices
+                    }
+                    emitServicesDiscovered(discoveredServices)
 
                     // Restore connection parameters.
                     if (environment.reportsConnectionParameters) {
@@ -1147,10 +1153,26 @@ class PeripheralSpec<ID: Any> private constructor(
                 is ServiceDiscoveryResult.Failure -> {
                     // Let's say the failure happens after some delay.
                     delay(connectionInterval * 2)
-                    _events.emit(ServicesDiscovered(emptyList()))
+                    // No exact error is reported, just like an empty result.
+                    _events.emit(ServiceDiscoveryFailed(RemoteServices.Failed.Reason.EmptyResult))
                 }
             }
             return true
+        }
+
+        /**
+         * Reports the result of the service discovery.
+         *
+         * A real peripheral has at least Generic Access and Generic Attribute services, so
+         * a discovery returning no services failed. This is how it's reported by the client,
+         * see `onServicesDiscovered` in `NativeGattCallback`.
+         */
+        private suspend fun emitServicesDiscovered(services: List<RemoteService>) {
+            when {
+                services.isEmpty() ->
+                    _events.emit(ServiceDiscoveryFailed(RemoteServices.Failed.Reason.EmptyResult))
+                else -> _events.emit(ServicesDiscovered(services))
+            }
         }
 
         /**

@@ -73,14 +73,16 @@ sealed class ServiceDiscoveryResult {
     /**
      * The service discovery operation succeeded.
      *
-     * The client will receive a list of requested services (which may be empty if no matching
-     * services were found).
+     * The client will receive a list of requested services. If the peripheral has no services
+     * at all, the discovery is reported as failed, as a real peripheral always has at least
+     * the Generic Access and Generic Attribute services.
      */
     object Success : ServiceDiscoveryResult()
     /**
      * The service discovery operation failed.
      *
-     * Reporting [Failure] will return an empty service list to the client.
+     * Reporting [Failure] will report a failed service discovery to the client, with the same
+     * reason as when no services were found.
      *
      * Note: This library does not provide a way to report an exact error during service discovery.
      * Instead, it simply reports that no services were found.
