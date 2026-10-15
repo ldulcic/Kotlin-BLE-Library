@@ -366,6 +366,8 @@ open class MockCentralManagerImpl(
         // Ignore if already closed.
         if (!isOpen) return
         super.close()
+        // Stop simulating the peripherals, so they stop advertising.
+        tearDownSimulation()
     }
 
     // ---- Private implementation ----

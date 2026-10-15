@@ -37,6 +37,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -290,7 +291,26 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("CentralManager.close() does not close its peripherals.")
+    fun `closing the manager stops the advertising of the simulated peripherals`() = runTest {
+        val manager = newManager(spec())
+        var results = 0
+        backgroundScope.launch { manager.scan().collect { results++ } }
+        // The peripheral advertises every 100 ms.
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertTrue(results > 0)
+
+        manager.close()
+        runCurrent()
+        val resultsAfterClose = results
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        assertEquals(resultsAfterClose, results)
+    }
+
+    @Test
+    @Ignore("Closing a peripheral does not release its connection on the PeripheralSpec: the disconnection of one client reaches all the clients of the spec (shared event stream).")
     fun `closing the manager lets the device know that the client has disconnected`() = runTest {
         val events = Events()
         val spec = spec(events = events)
