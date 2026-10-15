@@ -3,7 +3,6 @@ package no.nordicsemi.kotlin.ble.core.mock.internal
 import no.nordicsemi.kotlin.ble.core.AdvertisingDataFlag
 import no.nordicsemi.kotlin.ble.core.util.fromShortUuid
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -49,7 +48,6 @@ class AdvertisingDataScopeImplTest {
     }
 
     @Test
-    @Ignore("TX power level is not advertised / not parsed back in core-mock.")
     fun `TX power level of the advertising set is advertised when requested`() {
         assertEquals(-12, scope(-12) { CompleteLocalName("Dev"); IncludeTxPowerLevel() }.build().txPowerLevel)
     }
