@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -927,6 +928,9 @@ class PeripheralSpec<ID: Any> private constructor(
                 // This event will be ignored by already connected clients, but can re-connect
                 // a disconnected client, if not closed.
                 connectionsCount += 1
+                if (autoConnect) {
+                    gatt.reconnectOnLinkLoss(advertisements, autoMtu)
+                }
                 _events.emit(ConnectionStateChanged(ConnectionState.Connected))
                 return@also
             }
@@ -950,6 +954,11 @@ class PeripheralSpec<ID: Any> private constructor(
             val assumedPublicAddress = !isKnown
             if (assumedPublicAddress && addressType != AddressType.PUBLIC) {
                 return@also
+            }
+
+            // With auto-connect the system keeps connecting, also when the link is lost later.
+            if (autoConnect) {
+                gatt.reconnectOnLinkLoss(advertisements, autoMtu)
             }
 
             // Connection Request is sent as a response to a connectable advertisement.
@@ -1001,10 +1010,60 @@ class PeripheralSpec<ID: Any> private constructor(
             .onEach { cachedServices = null }
             .launchIn(managerScope)
 
+        /** The job observing the connection state, started for auto-connect connections. */
+        private var autoReconnectMonitoring: Job? = null
+
+        /** The job waiting for the peripheral to advertise after the link has been lost. */
+        private var reconnection: Job? = null
+
+        /**
+         * Makes the client reconnect when the link is lost, like with `autoConnect` set to `true`
+         * on Android: the system keeps connecting, and the connection is established when
+         * the peripheral advertises, as soon as it is in range.
+         *
+         * The client does not reconnect after it has disconnected itself, or when it has been
+         * closed.
+         *
+         * @param advertisements A flow of advertisements emitted by the mock advertiser.
+         * @param autoMtu Whether the MTU should be automatically negotiated upon connection.
+         */
+        internal fun reconnectOnLinkLoss(advertisements: Flow<MockScanResult<*>>, autoMtu: Boolean) {
+            autoReconnectMonitoring?.cancel()
+            autoReconnectMonitoring = events
+                .filterIsInstance<ConnectionStateChanged>()
+                .map { it.newState }
+                .filterIsInstance<ConnectionState.Disconnected>()
+                .onEach { state ->
+                    reconnection?.cancel()
+                    // Like the client, which keeps an auto-connect peripheral open (Connecting)
+                    // unless it was disconnected by the user, or the bond information is lost.
+                    val isLinkLost = !state.isUserInitiated &&
+                            state.reason !is Reason.InsufficientAuthentication
+                    reconnection = when (isLinkLost) {
+                        true -> managerScope.launch { reconnect(advertisements, autoMtu) }
+                        false -> null
+                    }
+                }
+                .launchIn(managerScope)
+        }
+
+        /** Connects when the peripheral advertises, until the connection is accepted. */
+        private suspend fun reconnect(advertisements: Flow<MockScanResult<*>>, autoMtu: Boolean) {
+            do {
+                val advertisement = advertisements.first { scanResult ->
+                    scanResult.peripheralSpec.identifier == identifier &&
+                            scanResult.isConnectable &&
+                            environment.canReceive(scanResult)
+                }
+            } while (!connect(advertisement.primaryPhy, autoMtu))
+        }
+
         /** Closes the GATT connection. */
         internal fun close() {
             cachedServices = null
             cacheMonitoring.cancel()
+            autoReconnectMonitoring?.cancel()
+            reconnection?.cancel()
         }
 
         /**
@@ -1031,11 +1090,12 @@ class PeripheralSpec<ID: Any> private constructor(
          * @param phy The PHY used for the connection. This is the primary PHY of the connectable
          * advertisement, which triggered the connection request.
          * @param autoMtu Whether the MTU should be automatically negotiated upon connection.
+         * @return `true` if the connection was accepted by the peripheral.
          * @throws IllegalStateException when the device is not connectable.
          */
-        suspend fun connect(phy: PrimaryPhy, autoMtu: Boolean) {
-            val maxAttMtu = maxAttMtu ?: return
-            val maxLlMtu = this@PeripheralSpec.maxLlMtu ?: return
+        suspend fun connect(phy: PrimaryPhy, autoMtu: Boolean): Boolean {
+            val maxAttMtu = maxAttMtu ?: return false
+            val maxLlMtu = this@PeripheralSpec.maxLlMtu ?: return false
             val maxSupportedAttMtu = maxAttMtu.coerceAtMost(environment.maxAttMtu)
             val maxSupportedLlMtu = maxLlMtu.coerceAtMost(environment.maxLlMtu)
 
@@ -1064,10 +1124,12 @@ class PeripheralSpec<ID: Any> private constructor(
                     if (autoMtu) {
                         simulateMtuRequest(maxSupportedAttMtu)
                     }
+                    return true
                 }
 
                 ConnectionResult.Deny -> {
                     // Do nothing. The connection request should time out.
+                    return false
                 }
             }
         }
