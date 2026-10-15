@@ -39,6 +39,7 @@ import android.content.IntentFilter
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
@@ -53,6 +54,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import no.nordicsemi.kotlin.ble.client.MonitoringEvent
 import no.nordicsemi.kotlin.ble.client.RangeEvent
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
@@ -286,7 +288,18 @@ internal class NativeCentralManagerImpl(
         logger?.trace(Layer.GAP) {
             "Starting scanning with ${filters?.let { "filters: $it" } ?: "no filters"}"
         }
-        scanner.startScan(filters?.toNative(), settings, callback)
+        // startScan() blocks until the scan client is registered, so it is not called on the
+        // thread collecting the flow, which may be the main thread.
+        try {
+            withContext(Dispatchers.IO) {
+                scanner.startScan(filters?.toNative(), settings, callback)
+            }
+        } catch (e: CancellationException) {
+            // The flow was canceled when the scan was being started. awaitClose() is not reached,
+            // so the scan has to be stopped here.
+            scanner.stopScan(callback)
+            throw e
+        }
 
         // Set a timeout to stop the scan.
         if (timeout > 0.milliseconds) {
@@ -355,7 +368,17 @@ internal class NativeCentralManagerImpl(
         logger?.trace(Layer.GAP) {
             "Starting scanning with ${filters?.let { "filters: $it" } ?: "no filters"}"
         }
-        if (!adapter.startLeScan(callback)) {
+        // startLeScan() blocks until the scan client is registered (up to 10 seconds), so it is
+        // not called on the thread collecting the flow, which may be the main thread.
+        val started = try {
+            withContext(Dispatchers.IO) { adapter.startLeScan(callback) }
+        } catch (e: CancellationException) {
+            // The flow was canceled when the scan was being started. awaitClose() is not reached,
+            // so the scan has to be stopped here.
+            adapter.stopLeScan(callback)
+            throw e
+        }
+        if (!started) {
             with (ScanningFailedToStartException(ScanningFailedToStartException.Reason.InternalError)) {
                 logger?.error(Layer.GAP, this)
                 closeWithCallSite(this)
