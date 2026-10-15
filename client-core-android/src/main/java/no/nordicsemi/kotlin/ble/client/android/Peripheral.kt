@@ -36,6 +36,7 @@ package no.nordicsemi.kotlin.ble.client.android
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -51,6 +52,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.timeout
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeout
 import no.nordicsemi.kotlin.ble.client.ConnectionParametersChanged
 import no.nordicsemi.kotlin.ble.client.ConnectionStateChanged
@@ -89,6 +91,7 @@ import kotlin.math.min
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * Android-specific implementation of a peripheral.
@@ -395,19 +398,30 @@ open class Peripheral(
 
             // Direct connection gives more options to configure the connection.
             is CentralManager.ConnectionOptions.Direct -> {
-                val now = System.currentTimeMillis()
+                val start = TimeSource.Monotonic.markNow()
+                // The timeout that was reached, when it is known without parsing the exception.
+                var timeoutReached: Duration? = null
                 try {
-                    val state = await(
-                        action = {
-                            impl.connect(
-                                autoConnect = false,
-                                autoMtu = options.automaticallyRequestHighestValueLength,
-                                opportunistic = options.opportunistic,
-                            )
-                        },
-                        condition = { it.isConnected || it.isDisconnected },
-                        timeout = options.timeout,
-                    )
+                    val state = try {
+                        await(
+                            action = {
+                                impl.connect(
+                                    autoConnect = false,
+                                    autoMtu = options.automaticallyRequestHighestValueLength,
+                                    opportunistic = options.opportunistic,
+                                )
+                            },
+                            condition = { it.isConnected || it.isDisconnected },
+                            timeout = options.timeout,
+                        )
+                    } catch (e: TimeoutCancellationException) {
+                        // The timeout of the options cancels only the awaiting block, so this
+                        // coroutine is still active. A timeout of an outer withTimeout cancels it too.
+                        if (currentCoroutineContext().isActive) {
+                            timeoutReached = options.timeout
+                        }
+                        throw e
+                    }
                     when (state) {
                         is ConnectionState.Connected -> {
                             logger?.info(Layer.GAP) { "Connected to $this" }
@@ -432,11 +446,12 @@ open class Peripheral(
                             // Error 147 was added in API 35: https://developer.android.com/reference/android/bluetooth/BluetoothGatt#GATT_CONNECTION_TIMEOUT
                             // Before, a connection timeout was reported as error 133.
                             if (reason is Reason.Unknown && (reason.status == 133 || reason.status == 147)) {
-                                val elapsed = System.currentTimeMillis() - now
+                                val elapsed = start.elapsedNow()
                                 // Default timeout for direct connection is 30 seconds. Let's use 25.
-                                if (elapsed >= 25000) {
+                                if (elapsed >= 25.seconds) {
                                     // The connection timeout should behave just as a timeout defined
                                     // by the user with withTimeout or Direct(timeout=...).
+                                    timeoutReached = elapsed
                                     withTimeout(Duration.ZERO) {}
                                     // ^ throws TimeoutCancellationException("Timed out immediately")!!!
                                 }
@@ -453,9 +468,9 @@ open class Peripheral(
                         else -> {}
                     }
                 } catch (e: TimeoutCancellationException) {
-                    val elapsed = System.currentTimeMillis() - now
-                    logger?.warn(Layer.GAP) { "Connection attempt timed out after ${e.timeout ?: elapsed.milliseconds}" }
-                    _state.update { ConnectionState.Disconnected(Reason.Timeout(e.timeout ?: elapsed.milliseconds)) }
+                    val timeout = timeoutReached ?: e.timeout ?: start.elapsedNow()
+                    logger?.warn(Layer.GAP) { "Connection attempt timed out after $timeout" }
+                    _state.update { ConnectionState.Disconnected(Reason.Timeout(timeout)) }
                     close()
                     throw e
                 } catch (e: CancellationException) {
@@ -1044,13 +1059,18 @@ open class Peripheral(
         get() = impl.bondState
 
     /**
-     * A helper property to extract the timeout from the [TimeoutCancellationException] message.
+     * A helper property to extract the timeout from the [TimeoutCancellationException] message,
+     * if it is there.
+     *
+     * The message of `withTimeout` is "Timed out waiting for 3000 ms", and the one of a test
+     * dispatcher with virtual time is "Timed out after 3s of _virtual_ (kotlinx.coroutines.test) time".
      */
     private val TimeoutCancellationException.timeout: Duration?
         get() = message?.let { message ->
-            val regex = Regex("""\d+""")
-            val match = regex.find(message)
-            return match?.value?.toLongOrNull()?.milliseconds
+            Regex("""waiting for (\d+) ms""").find(message)
+                ?.groupValues?.get(1)?.toLongOrNull()?.milliseconds
+                ?: Regex("""after (.+?) of _virtual_""").find(message)
+                    ?.groupValues?.get(1)?.let { Duration.parseOrNull(it) }
         }
 
     /**
