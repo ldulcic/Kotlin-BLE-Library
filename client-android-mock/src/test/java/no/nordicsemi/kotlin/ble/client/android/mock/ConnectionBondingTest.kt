@@ -31,12 +31,17 @@
 
 package no.nordicsemi.kotlin.ble.client.android.mock
 
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
 import no.nordicsemi.kotlin.ble.client.android.CentralManager.ConnectionOptions
+import no.nordicsemi.kotlin.ble.client.android.exception.BondingFailedException
 import no.nordicsemi.kotlin.ble.client.mock.AddressType
+import no.nordicsemi.kotlin.ble.client.mock.BondResult
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpecEventHandler
 import no.nordicsemi.kotlin.ble.core.BondState
@@ -45,7 +50,6 @@ import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.exception.ManagerClosedException
 import no.nordicsemi.kotlin.ble.environment.android.mock.MockAndroidEnvironment
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -72,6 +76,8 @@ class ConnectionBondingTest {
         address: String = ADDRESS,
         addressType: AddressType = AddressType.PUBLIC,
         isBonded: Boolean,
+        peripheralHasBond: Boolean = isBonded,
+        eventHandler: PeripheralSpecEventHandler = object : PeripheralSpecEventHandler {},
     ): PeripheralSpec<String> = PeripheralSpec.simulatePeripheral(
         identifier = address,
         addressType = addressType,
@@ -79,7 +85,8 @@ class ConnectionBondingTest {
         connectable(
             name = "Device",
             isBonded = isBonded,
-            eventHandler = object : PeripheralSpecEventHandler {},
+            peripheralHasBond = peripheralHasBond,
+            eventHandler = eventHandler,
             cachedServices = {},
         )
         advertising(
@@ -192,7 +199,6 @@ class ConnectionBondingTest {
     }
 
     @Test
-    @Ignore("Bonding is not implemented in the mock yet (MockExecutor.createBond/removeBond are TODO).")
     fun `creating a bond bonds the peripheral`() = runTest {
         val manager = manager(spec(isBonded = false))
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
@@ -205,7 +211,6 @@ class ConnectionBondingTest {
     }
 
     @Test
-    @Ignore("Bonding is not implemented in the mock yet (MockExecutor.createBond/removeBond are TODO).")
     fun `created bond is returned with bonded peripherals`() = runTest {
         val manager = manager(spec(isBonded = false))
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
@@ -228,7 +233,6 @@ class ConnectionBondingTest {
     }
 
     @Test
-    @Ignore("Bonding is not implemented in the mock yet (MockExecutor.createBond/removeBond are TODO).")
     fun `removing a bond removes the bond information`() = runTest {
         val manager = manager(spec(isBonded = true))
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
@@ -240,7 +244,6 @@ class ConnectionBondingTest {
     }
 
     @Test
-    @Ignore("Bonding is not implemented in the mock yet (MockExecutor.createBond/removeBond are TODO).")
     fun `removing a bond terminates the connection`() = runTest {
         val manager = manager(spec(isBonded = true))
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
@@ -272,7 +275,6 @@ class ConnectionBondingTest {
     }
 
     @Test
-    @Ignore("Bonding is not implemented in the mock yet (MockExecutor.createBond/removeBond are TODO).")
     fun `removing a bond on Android 17 is possible with the privileged permission`() = runTest {
         val environment = MockAndroidEnvironment.Api37(isBluetoothPrivilegedPermissionGranted = true)
         val manager = manager(spec(isBonded = true), environment = environment)
@@ -281,5 +283,162 @@ class ConnectionBondingTest {
         peripheral.removeBond()
 
         assertEquals(BondState.NONE, peripheral.bondState.value)
+    }
+
+    @Test
+    fun `rejected bond request fails creating the bond`() = runTest {
+        val rejecting = object : PeripheralSpecEventHandler {
+            override fun onBondRequest() = BondResult.Reject
+        }
+        val manager = manager(spec(isBonded = false, eventHandler = rejecting))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+
+        assertFailsWith<BondingFailedException> { peripheral.createBond() }
+
+        assertEquals(BondState.NONE, peripheral.bondState.value)
+        assertTrue(manager.getBondedPeripherals().isEmpty())
+    }
+
+    @Test
+    fun `bond request is passed to the event handler`() = runTest {
+        var requests = 0
+        val counting = object : PeripheralSpecEventHandler {
+            override fun onBondRequest(): BondResult = BondResult.Accept.also { requests++ }
+        }
+        val manager = manager(spec(isBonded = false, eventHandler = counting))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+
+        peripheral.createBond()
+
+        assertEquals(1, requests)
+    }
+
+    @Test
+    fun `bond state goes through bonding`() = runTest {
+        val manager = manager(spec(isBonded = false))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        val states = mutableListOf<BondState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            peripheral.bondState.toList(states)
+        }
+
+        peripheral.createBond()
+
+        assertEquals(listOf(BondState.NONE, BondState.BONDING, BondState.BONDED), states)
+    }
+
+    @Test
+    fun `bond is kept by the spec for other managers`() = runTest {
+        val spec = spec(isBonded = false)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        peripheral.createBond()
+
+        val otherManager = manager(spec)
+
+        assertEquals(listOf(ADDRESS), otherManager.getBondedPeripherals().map { it.address })
+    }
+
+    @Test
+    fun `peripheral stores the bond by default`() = runTest {
+        assertTrue(spec(isBonded = true).peripheralHasBond)
+        assertFalse(spec(isBonded = false).peripheralHasBond)
+    }
+
+    @Test
+    fun `creating a bond makes the peripheral store it`() = runTest {
+        val spec = spec(isBonded = false)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+
+        peripheral.createBond()
+
+        assertTrue(spec.peripheralHasBond)
+    }
+
+    @Test
+    fun `removing a bond does not make the peripheral forget it`() = runTest {
+        val spec = spec(isBonded = true)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        peripheral.removeBond()
+
+        assertTrue(spec.peripheralHasBond)
+    }
+
+    @Test
+    fun `peripheral that still has the bond rejects bonding`() = runTest {
+        var requests = 0
+        val counting = object : PeripheralSpecEventHandler {
+            override fun onBondRequest(): BondResult = BondResult.Accept.also { requests++ }
+        }
+        // The phone forgot the bond, but the peripheral did not.
+        val spec = spec(isBonded = false, peripheralHasBond = true, eventHandler = counting)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+
+        assertFailsWith<BondingFailedException> { peripheral.createBond() }
+
+        assertEquals(BondState.NONE, peripheral.bondState.value)
+        assertEquals(0, requests)
+    }
+
+    @Test
+    fun `bonding succeeds after the peripheral forgets the bond`() = runTest {
+        val spec = spec(isBonded = false, peripheralHasBond = true)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        spec.simulatePeripheralBondLoss()
+
+        peripheral.createBond()
+
+        assertEquals(BondState.BONDED, peripheral.bondState.value)
+    }
+
+    @Test
+    fun `peripheral forgetting the bond does not remove the bond from the phone`() = runTest {
+        val spec = spec(isBonded = true)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        spec.simulatePeripheralBondLoss()
+
+        assertFalse(spec.peripheralHasBond)
+        assertEquals(BondState.BONDED, peripheral.bondState.value)
+    }
+
+    @Test
+    fun `simulated bond removal terminates the connection`() = runTest {
+        val spec = spec(isBonded = true)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+
+        spec.simulateBondRemoval()
+        runCurrent()
+
+        assertEquals(BondState.NONE, peripheral.bondState.value)
+        assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertTrue(spec.peripheralHasBond)
+    }
+
+    @Test
+    fun `simulated bonding bonds the peripheral`() = runTest {
+        val spec = spec(isBonded = false)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        spec.simulateBonding()
+        runCurrent()
+
+        assertEquals(BondState.BONDED, peripheral.bondState.value)
     }
 }

@@ -67,6 +67,25 @@ sealed class ConnectionResult {
 }
 
 /**
+ * The result of a bonding request.
+ *
+ * The bonding level (Just Works, Passkey, Numeric Comparison) is not simulated. Bonding can only
+ * be accepted, or rejected, as when the user cancels pairing or enters a wrong PIN.
+ */
+sealed class BondResult {
+    /**
+     * The bonding succeeded.
+     *
+     * This is the default behavior.
+     */
+    object Accept : BondResult()
+    /**
+     * The bonding failed, for example because the user cancelled it or entered a wrong PIN.
+     */
+    object Reject : BondResult()
+}
+
+/**
  * The result of a service discovery request.
  */
 sealed class ServiceDiscoveryResult {
@@ -212,6 +231,17 @@ interface PeripheralSpecEventHandler {
     // Note: This cannot be suspended! It can request MTU, bonding, PHY update, etc., but in a coroutine.
     fun onConnectionRequest(phy: PrimaryPhy): ConnectionResult {
         return ConnectionResult.Accept
+    }
+
+    /**
+     * Called when a client requests bonding with the mock peripheral.
+     *
+     * By default, the request is accepted, and the peripheral becomes bonded.
+     *
+     * @return The result of the bonding request, by default [BondResult.Accept].
+     */
+    fun onBondRequest(): BondResult {
+        return BondResult.Accept
     }
 
     /**

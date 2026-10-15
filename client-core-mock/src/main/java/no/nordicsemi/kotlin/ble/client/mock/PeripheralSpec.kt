@@ -41,8 +41,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
@@ -70,6 +73,7 @@ import no.nordicsemi.kotlin.ble.core.ATT_MTU_DEFAULT
 import no.nordicsemi.kotlin.ble.core.ATT_MTU_MAX
 import no.nordicsemi.kotlin.ble.core.AdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.Bluetooth5AdvertisingSetParameters
+import no.nordicsemi.kotlin.ble.core.BondState
 import no.nordicsemi.kotlin.ble.core.Characteristic
 import no.nordicsemi.kotlin.ble.core.ConnectionParameters
 import no.nordicsemi.kotlin.ble.core.ConnectionState
@@ -123,7 +127,8 @@ import kotlin.uuid.Uuid
  * or `null` if the peripheral is not initially connected.
  * @param isKnown Whether the peripheral has been scanned before and its address type is cached.
  * It is not possible to connect to an unknown device without scanning.
- * @param isBonded Whether the peripheral is bonded.
+ * @param isBonded Whether the phone has the bond information of the peripheral.
+ * @param peripheralHasBond Whether the peripheral has the bond information of the phone.
  * @param advertisingSets List of advertisement configurations.
  * @param eventHandler The event handler that will be called for every event emulating
  * a real peripheral.
@@ -147,6 +152,7 @@ class PeripheralSpec<ID: Any> private constructor(
     activePhy: PhyInUse?,
     isKnown: Boolean,
     isBonded: Boolean,
+    peripheralHasBond: Boolean,
     internal val advertisingSets: List<MockAdvertisingSet>?,
     internal val eventHandler: PeripheralSpecEventHandler?,
     private var services: List<ServiceDefinition>?,
@@ -299,8 +305,31 @@ class PeripheralSpec<ID: Any> private constructor(
     var isKnown: Boolean = isKnown
         private set
 
-    /** Whether the peripheral is bonded. */
-    var isBonded: Boolean = isBonded
+    private val _bondState = MutableStateFlow(if (isBonded) BondState.BONDED else BondState.NONE)
+
+    /**
+     * The bond state of the peripheral, as seen by the phone.
+     *
+     * The bond information is stored by both sides: the phone and the peripheral. This is the
+     * phone's side. It is created by a client requesting bonding, or by accessing an attribute that
+     * requires authentication (see [PeripheralSpecEventHandler.onBondRequest]).
+     *
+     * @see peripheralHasBond
+     */
+    val bondState: StateFlow<BondState> = _bondState.asStateFlow()
+
+    /** Whether the phone has the bond information of the peripheral. */
+    val isBonded: Boolean
+        get() = _bondState.value == BondState.BONDED
+
+    /**
+     * Whether the peripheral has the bond information of the phone.
+     *
+     * This may differ from [isBonded]: when the phone forgot the bond, but the peripheral did not,
+     * the peripheral rejects an attempt to pair again, until it forgets the bond too.
+     */
+    @Volatile
+    var peripheralHasBond: Boolean = peripheralHasBond
         private set
 
     /** Whether the peripheral is connected. */
@@ -767,6 +796,64 @@ class PeripheralSpec<ID: Any> private constructor(
     }
 
     /**
+     * Simulates bonding of the phone and the peripheral.
+     *
+     * The bond state changes to [BondState.BONDING] and then, depending on the response of
+     * [PeripheralSpecEventHandler.onBondRequest], to [BondState.BONDED] or back to [BondState.NONE].
+     * The peripheral rejects bonding if it still has the bond information ([peripheralHasBond])
+     * and the phone does not, or if it is not connectable.
+     *
+     * Does nothing if the peripheral is already bonded, or the bonding is in progress.
+     */
+    fun simulateBonding() {
+        if (!_bondState.compareAndSet(BondState.NONE, BondState.BONDING)) {
+            return
+        }
+        // The result is reported later, so that the clients can observe the BONDING state.
+        launchShared {
+            val result = try {
+                when {
+                    // The peripheral does not pair again with a phone that it is bonded with.
+                    peripheralHasBond -> BondResult.Reject
+                    else -> eventHandler?.onBondRequest() ?: BondResult.Reject
+                }
+            } catch (_: Exception) {
+                BondResult.Reject
+            }
+            when (result) {
+                BondResult.Accept -> {
+                    peripheralHasBond = true
+                    _bondState.value = BondState.BONDED
+                }
+                BondResult.Reject -> _bondState.value = BondState.NONE
+            }
+        }
+    }
+
+    /**
+     * Simulates the phone removing the bond information of the peripheral.
+     *
+     * The peripheral keeps its bond information ([peripheralHasBond]). The connection is terminated.
+     *
+     * @see simulatePeripheralBondLoss
+     */
+    fun simulateBondRemoval() {
+        _bondState.value = BondState.NONE
+        simulateDisconnection()
+    }
+
+    /**
+     * Simulates the peripheral forgetting the bond information, for example after a factory reset.
+     *
+     * The phone keeps its bond information ([isBonded]).
+     *
+     * @see simulateBondRemoval
+     */
+    fun simulatePeripheralBondLoss() {
+        peripheralHasBond = false
+    }
+
+    /**
      * Simulates peripheral reset.
      *
      * Connected clients will receive a disconnection event with reason
@@ -893,7 +980,7 @@ class PeripheralSpec<ID: Any> private constructor(
             this.identifier = newIdentifier
             this.addressType = addressType
             this.isKnown = false
-            this.isBonded = false
+            _bondState.value = BondState.NONE
         }
         // TODO what with cached connections in central managers? PeripheralSpec instance is the same.
     }
@@ -1605,6 +1692,7 @@ class PeripheralSpec<ID: Any> private constructor(
         private var activePhy: PhyInUse? = null
         private var isKnown: Boolean = false
         private var isBonded: Boolean = false
+        private var peripheralHasBond: Boolean = false
         private var isServiceCacheValid: Boolean = false
 
         /**
@@ -1746,7 +1834,9 @@ class PeripheralSpec<ID: Any> private constructor(
          * Layer using Data Length Extension (DLE)). This value must be in range 27..251.
          * @param isPhyLe2MSupported Whether the device supports PHY LE 2M.
          * @param isPhyCodedSupported Whether the device supports PHY LE Coded.
-         * @param isBonded Whether the peripheral is bonded.
+         * @param isBonded Whether the phone has the bond information of the peripheral.
+         * @param peripheralHasBond Whether the peripheral has the bond information of the phone.
+         * By default, the same as [isBonded].
          * @param eventHandler The event handler that will be called for every event emulating
          * a real peripheral.
          * @param actualServices The services available after service discovery. If `null` (default),
@@ -1766,6 +1856,7 @@ class PeripheralSpec<ID: Any> private constructor(
             isPhyLe2MSupported: Boolean = false,
             isPhyCodedSupported: Boolean = false,
             isBonded: Boolean = false,
+            peripheralHasBond: Boolean = isBonded,
             eventHandler: PeripheralSpecEventHandler,
             actualServices: (MockServerScope.() -> Unit)? = null,
             cachedServices: (MockServerScope.() -> Unit),
@@ -1791,6 +1882,7 @@ class PeripheralSpec<ID: Any> private constructor(
             // As services were cached, this device for sure was scanned before.
             this.isKnown = true
             this.isBonded = isBonded
+            this.peripheralHasBond = peripheralHasBond
         }
 
         /**
@@ -1818,7 +1910,9 @@ class PeripheralSpec<ID: Any> private constructor(
          * @param activePhy The PHYs (TX and RX) used by the existing connection. Both must be
          * supported, so to use LE 2M or LE Coded set [isPhyLe2MSupported] or [isPhyCodedSupported] too.
          * Ignored if the peripheral is out of range, as it is not connected then.
-         * @param isBonded Whether the peripheral is bonded.
+         * @param isBonded Whether the phone has the bond information of the peripheral.
+         * @param peripheralHasBond Whether the peripheral has the bond information of the phone.
+         * By default, the same as [isBonded].
          * @param eventHandler The event handler that will be called for every event emulating
          * a real peripheral.
          * @param actualServices The services available after service discovery. If `null` (default),
@@ -1839,6 +1933,7 @@ class PeripheralSpec<ID: Any> private constructor(
             isPhyCodedSupported: Boolean = false,
             activePhy: PhyInUse = PhyInUse.PHY_LE_1M,
             isBonded: Boolean = false,
+            peripheralHasBond: Boolean = isBonded,
             eventHandler: PeripheralSpecEventHandler,
             actualServices: (MockServerScope.() -> Unit)? = null,
             cachedServices: (MockServerScope.() -> Unit),
@@ -1863,6 +1958,7 @@ class PeripheralSpec<ID: Any> private constructor(
             this.isServiceCacheValid = actualServices == null
             this.isKnown = true
             this.isBonded = isBonded
+            this.peripheralHasBond = peripheralHasBond
             // Note: The PHY here may be unsupported. This is checked in build(), as
             // `highSpeed` may be called later and add supported PHYs.
             this.activePhy = activePhy
@@ -1954,6 +2050,7 @@ class PeripheralSpec<ID: Any> private constructor(
                 ?.takeIf { proximity != Proximity.OUT_OF_RANGE },
             isKnown = isKnown,
             isBonded = isBonded,
+            peripheralHasBond = peripheralHasBond,
             advertisingSets = advertisingSets,
             eventHandler = eventHandler,
             services = services,
