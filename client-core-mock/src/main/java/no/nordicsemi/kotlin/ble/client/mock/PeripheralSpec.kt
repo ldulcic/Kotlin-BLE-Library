@@ -537,6 +537,22 @@ class PeripheralSpec<ID: Any> private constructor(
     companion object {
 
         /**
+         * The number of connection events after which the Link Layer applies a new set of connection
+         * parameters, or a new PHY.
+         *
+         * Both the Connection Update and the PHY Update procedures are procedures with an *instant*,
+         * the connection event in which the change happens. Bluetooth Core Specification 6.3,
+         * Vol 6, Part B (Link Layer Specification), 5.5 Procedures with Instants: "If the Link Layer
+         * of the Central is selecting the instant value, then the Central should allow a minimum of
+         * 6 connection events when it intends to transmit and that the Peripheral will be listening
+         * for before the instant occurs."
+         *
+         * This is that minimum, in old connection intervals. The slave latency, which may make
+         * the Peripheral not listen to some of the events, is not modelled.
+         */
+        private const val LL_UPDATE_INSTANT_EVENTS = 6
+
+        /**
          * Simulates a peripheral with given ID and proximity.
          *
          * Note, that if the identifier is a Bluetooth Address, the 2 most significant bits
@@ -889,9 +905,13 @@ class PeripheralSpec<ID: Any> private constructor(
      *
      * @param parameters The new connection parameters.
      * @param delay Number of old connection intervals to wait before applying new parameters.
-     * Defaults to 5.
+     * Defaults to 6, the minimum number of connection events before the instant, in which the
+     * Link Layer applies them.
      */
-    fun simulateConnectionParametersRequest(parameters: ConnectionParameters.Specified, delay: Int = 5) {
+    fun simulateConnectionParametersRequest(
+        parameters: ConnectionParameters.Specified,
+        delay: Int = LL_UPDATE_INSTANT_EVENTS,
+    ) {
         // TODO Validate parameters against preferred / possible parameters?
         connectionParameters?.connectionIntervalMillis?.let { connectionInterval ->
             launchShared {
@@ -1408,7 +1428,7 @@ class PeripheralSpec<ID: Any> private constructor(
             // and then emit the event with new parameters.
             if (environment.reportsConnectionParameters) {
                 // Simulate a delay for requesting connection parameters update.
-                delay(connectionParameters.connectionIntervalMillis.milliseconds * 5)
+                delay(connectionParameters.connectionIntervalMillis.milliseconds * LL_UPDATE_INSTANT_EVENTS)
 
                 // Check if the peripheral is still connected and emit the event.
                 if (isConnected) {
@@ -1466,7 +1486,7 @@ class PeripheralSpec<ID: Any> private constructor(
             val connectionParameters = connectionParameters ?: return
 
             // Simulate a delay for requesting PHY update.
-            delay(connectionParameters.connectionIntervalMillis.milliseconds * 2)
+            delay(connectionParameters.connectionIntervalMillis.milliseconds * LL_UPDATE_INSTANT_EVENTS)
 
             // Check if the peripheral is still connected.
             if (isConnected) {

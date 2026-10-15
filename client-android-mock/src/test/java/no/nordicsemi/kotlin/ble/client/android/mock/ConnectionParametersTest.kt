@@ -204,6 +204,35 @@ class ConnectionParametersTest {
     }
 
     @Test
+    fun `connection parameters requested by the peripheral are applied after 6 connection intervals by default`() = runTest {
+        val spec = spec()
+        val peripheral = connect(spec)
+        val newParameters = ConnectionParameters.Specified(connectionInterval = 12, latency = 4, supervisionTimeout = 200)
+
+        // The Central allows a minimum of 6 connection events before the instant.
+        // The connection interval of 25 units is 31 ms, 6 intervals is 186 ms.
+        spec.simulateConnectionParametersRequest(newParameters)
+        advanceTimeBy(180.milliseconds)
+        runCurrent()
+        assertEquals(ConnectionParameters.Unknown, peripheral.connectionParameters.value)
+
+        advanceTimeBy(10.milliseconds)
+        runCurrent()
+        assertEquals(newParameters, peripheral.connectionParameters.value)
+    }
+
+    @Test
+    fun `connection priority request takes 6 connection intervals`() = runTest {
+        val peripheral = connect()
+        val start = testScheduler.currentTime
+
+        peripheral.requestConnectionPriority(ConnectionPriority.HIGH)
+
+        // The connection interval of 25 units is 31 ms.
+        assertEquals(6 * 31L, testScheduler.currentTime - start)
+    }
+
+    @Test
     fun `connection parameters changed during service discovery are restored afterwards`() = runTest {
         val peripheral = connect()
         val values = mutableListOf<ConnectionParameters?>()
