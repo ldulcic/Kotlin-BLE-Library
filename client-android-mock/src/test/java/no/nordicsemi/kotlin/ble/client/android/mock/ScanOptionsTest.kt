@@ -185,6 +185,17 @@ class ScanOptionsTest {
     }
 
     @Test
+    fun `scan on LE Coded without LE Coded support fails when the flow is collected`() = runTest {
+        val environment = MockAndroidEnvironment.Api37(isLeCodedPhySupported = false)
+        val manager = CentralManager.mock(environment, backgroundScope)
+
+        // Like all scan errors, it is thrown to the collector, not when scan() is called.
+        val flow = manager.scan(timeout = 1.seconds, options = ScanOptions(phy = PrimaryPhy.PHY_LE_CODED))
+
+        assertFailsWith<ScanningFailedToStartException> { flow.toList() }
+    }
+
+    @Test
     fun `legacy-only scan ignores the PHY`() = runTest {
         // Legacy advertisements are always sent on LE 1M, so the PHY doesn't apply. The scan starts
         // and reports them even on a phone without LE Coded support.
