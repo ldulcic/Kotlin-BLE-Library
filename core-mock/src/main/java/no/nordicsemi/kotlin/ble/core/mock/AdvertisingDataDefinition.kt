@@ -91,9 +91,10 @@ class AdvertisingDataDefinition(
         var meshMessage: ByteArray? = null
         var meshBeacon: ByteArray? = null
 
-        // Advertisement data is a list of AD structures.
+        // Advertisement data is a list of AD structures: LENGTH (1B) | TYPE (1B) | DATA (1+B)
         var i = 0
-        while (raw.size > i + 3) {
+        // The shortest structure has 3 bytes, e.g. the flags or the TX power level.
+        while (raw.size >= i + 3) {
             // The first byte is the length of the AD structure.
             val length = (raw[i++].toInt() and 0xFF) - 1 // minus 1 as the length includes the type byte.
 
@@ -261,7 +262,7 @@ class AdvertisingDataDefinition(
 
             // Advertisement data is a list of AD structures.
             var i = 0
-            while (raw.size > i + 3) {
+            while (raw.size >= i + 3) {
                 // The first byte is the length of the AD structure.
                 val length =
                     (raw[i++].toInt() and 0xFF) - 1 // minus 1 as the length includes the type byte.
