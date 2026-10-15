@@ -114,6 +114,18 @@ class ConnectionPhyTest {
     }
 
     @Test
+    fun `phy update takes 6 connection intervals`() = runTest {
+        val peripheral = connect(spec(supports2M = true))
+        val start = testScheduler.currentTime
+
+        peripheral.setPreferredPhy(Phy.PHY_LE_2M)
+
+        // The Central allows a minimum of 6 connection events before the instant.
+        // The connection interval of 25 units is 31 ms.
+        assertEquals(6 * 31L, testScheduler.currentTime - start)
+    }
+
+    @Test
     fun `preferred phy is applied when supported by both devices`() = runTest {
         val peripheral = connect(spec(supports2M = true))
 
