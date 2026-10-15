@@ -40,7 +40,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -58,16 +57,22 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -93,7 +98,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import no.nordicsemi.kotlin.ble.android.sample.theme.AppTheme
-import no.nordicsemi.kotlin.ble.android.sample.view.LabeledSwitch
 import no.nordicsemi.kotlin.ble.client.AnyRemoteService
 import no.nordicsemi.kotlin.ble.client.RemoteCharacteristic
 import no.nordicsemi.kotlin.ble.client.RemoteDescriptor
@@ -104,6 +108,7 @@ import no.nordicsemi.kotlin.ble.client.android.preview.PreviewRemoteDescriptor
 import no.nordicsemi.kotlin.ble.client.android.preview.PreviewRemoteService
 import no.nordicsemi.kotlin.ble.core.CharacteristicProperty
 import no.nordicsemi.kotlin.ble.core.WriteType
+import no.nordicsemi.kotlin.ble.core.defaultWriteType
 import no.nordicsemi.kotlin.ble.core.util.fromShortUuid
 import no.nordicsemi.kotlin.ble.core.util.toShortString
 import java.text.SimpleDateFormat
@@ -865,7 +870,41 @@ private val smpUuid = Uuid.parse("da2e7828-fbce-4e01-ae9e-261174997c48")
 private val RemoteCharacteristic.isSmp: Boolean
     get() = uuid == smpUuid
 
-@OptIn(ExperimentalLayoutApi::class)
+/**
+ * The state of the [WriteDialog].
+ *
+ * @param characteristic The characteristic to write.
+ * @param initialValue The initial value, as hexadecimal text.
+ */
+@Stable
+private class WriteDialogState(
+    characteristic: RemoteCharacteristic,
+    initialValue: String,
+) {
+    /** The value to write, as hexadecimal text. */
+    var text by mutableStateOf(initialValue)
+
+    /**
+     * The write types supported by the characteristic. Signed Write is rarely used,
+     * so it is not offered.
+     */
+    val writeTypes: List<WriteType> = listOfNotNull(
+        WriteType.WITH_RESPONSE.takeIf { CharacteristicProperty.WRITE in characteristic.properties },
+        WriteType.WITHOUT_RESPONSE.takeIf { CharacteristicProperty.WRITE_WITHOUT_RESPONSE in characteristic.properties },
+    )
+
+    /** The selected write type. */
+    var writeType by mutableStateOf(
+        writeTypes.firstOrNull() ?: characteristic.properties.defaultWriteType ?: WriteType.WITH_RESPONSE
+    )
+}
+
+@Composable
+private fun rememberWriteDialogState(
+    characteristic: RemoteCharacteristic,
+    initialValue: String,
+) = remember(characteristic, initialValue) { WriteDialogState(characteristic, initialValue) }
+
 @Composable
 private fun WriteDialog(
     characteristic: RemoteCharacteristic,
@@ -873,9 +912,7 @@ private fun WriteDialog(
     onDismissRequest: () -> Unit,
     onWrite: (ByteArray, WriteType, String) -> Unit,
 ) {
-    var text by remember(initialValue) { mutableStateOf(initialValue) }
-    val defaultResponseRequired = CharacteristicProperty.WRITE in characteristic.properties
-    var responseRequired by remember { mutableStateOf(defaultResponseRequired) }
+    val state = rememberWriteDialogState(characteristic, initialValue)
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
@@ -883,78 +920,13 @@ private fun WriteDialog(
             Text(text = "Write Characteristic")
         },
         text = {
-            CompositionLocalProvider(
-                LocalTextStyle provides MaterialTheme.typography.bodySmall,
-            ) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Text(
-                        text = characteristic.uuid.toShortString(),
-                    )
-
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = { newValue ->
-                            text = newValue.filter { c ->
-                                c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
-                            }
-                        },
-                        label = { Text("Value (Hex)") },
-                        placeholder = { Text("e.g. 0102 or FF") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "Presets",
-                        )
-                        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                if (characteristic.isSmp) {
-                                    smpPresetValues.forEach { preset ->
-                                        SuggestionChip(
-                                            onClick = { text = preset.hex },
-                                            label = { Text(preset.label) }
-                                        )
-                                    }
-                                } else {
-                                    genericPresetValues.forEach { preset ->
-                                        SuggestionChip(
-                                            onClick = { text = preset.hex },
-                                            label = { Text(preset.label) }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    LabeledSwitch(
-                        title = "Response required",
-                        enabled = true,
-                        checked = responseRequired,
-                        onCheckedChange = { responseRequired = it },
-                    )
-                }
-            }
+            WriteDialogContent(characteristic, state)
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    val bytes = text.toHexByteArray()
-                    val writeType = if (responseRequired) {
-                        WriteType.WITH_RESPONSE
-                    } else {
-                        WriteType.WITHOUT_RESPONSE
-                    }
-                    onWrite(bytes, writeType, text)
+                    val bytes = state.text.toHexByteArray()
+                    onWrite(bytes, state.writeType, state.text)
                     onDismissRequest()
                 }
             ) {
@@ -969,6 +941,104 @@ private fun WriteDialog(
     )
 }
 
+/**
+ * The content of the [WriteDialog]. It is a separate function, as dialogs are not shown in previews.
+ */
+@Composable
+private fun WriteDialogContent(
+    characteristic: RemoteCharacteristic,
+    state: WriteDialogState,
+) {
+    CompositionLocalProvider(
+        LocalTextStyle provides MaterialTheme.typography.bodySmall,
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                text = characteristic.uuid.toShortString(),
+            )
+
+            OutlinedTextField(
+                value = state.text,
+                onValueChange = { newValue ->
+                    state.text = newValue.filter { c ->
+                        c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
+                    }
+                },
+                label = { Text("Value (Hex)") },
+                placeholder = { Text("e.g. 0102 or FF") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "Presets",
+                )
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (characteristic.isSmp) {
+                            smpPresetValues.forEach { preset ->
+                                SuggestionChip(
+                                    onClick = { state.text = preset.hex },
+                                    label = { Text(preset.label) }
+                                )
+                            }
+                        } else {
+                            genericPresetValues.forEach { preset ->
+                                SuggestionChip(
+                                    onClick = { state.text = preset.hex },
+                                    label = { Text(preset.label) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (state.writeTypes.isNotEmpty()) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Write type",
+                    )
+                    SingleChoiceSegmentedButtonRow(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        state.writeTypes.forEachIndexed { index, type ->
+                            SegmentedButton(
+                                selected = type == state.writeType,
+                                onClick = { state.writeType = type },
+                                // There is nothing to choose from if only one is supported.
+                                enabled = state.writeTypes.size > 1,
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = state.writeTypes.size,
+                                ),
+                                label = { Text(type.label) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private val WriteType.label: String
+    get() = when (this) {
+        WriteType.WITH_RESPONSE -> "With Response"
+        WriteType.WITHOUT_RESPONSE -> "Without Response"
+        WriteType.SIGNED -> "Signed"
+    }
+
 private fun String.toHexByteArray(): ByteArray {
     val cleanHex = filter { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
     if (cleanHex.isEmpty()) return byteArrayOf()
@@ -976,34 +1046,67 @@ private fun String.toHexByteArray(): ByteArray {
     return formatted.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }
 
-@Preview(showBackground = true)
+/**
+ * Shows the content of the write dialog on a surface looking like a dialog,
+ * as dialogs are not shown in previews.
+ */
 @Composable
-private fun PreviewWriteDialog() {
+private fun PreviewWriteDialogContent(characteristic: RemoteCharacteristic) {
     AppTheme {
-        WriteDialog(
-            characteristic = PreviewRemoteCharacteristic(
-                shortUuid = 0x2A00,
-                properties = setOf(CharacteristicProperty.WRITE)
-            ),
-            initialValue = "01",
-            onDismissRequest = {},
-            onWrite = { _, _, _ -> }
-        )
+        Surface(
+            shape = AlertDialogDefaults.shape,
+            color = AlertDialogDefaults.containerColor,
+            tonalElevation = AlertDialogDefaults.TonalElevation,
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = "Write Characteristic",
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                WriteDialogContent(
+                    characteristic = characteristic,
+                    state = rememberWriteDialogState(characteristic, initialValue = "01"),
+                )
+            }
+        }
     }
 }
 
 @Preview(showBackground = true)
 @Composable
+private fun PreviewWriteDialog() {
+    PreviewWriteDialogContent(
+        characteristic = PreviewRemoteCharacteristic(
+            shortUuid = 0x2A00,
+            properties = setOf(CharacteristicProperty.WRITE)
+        ),
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PreviewWriteDialog_bothWriteTypes() {
+    PreviewWriteDialogContent(
+        characteristic = PreviewRemoteCharacteristic(
+            shortUuid = 0x2A00,
+            properties = setOf(
+                CharacteristicProperty.WRITE,
+                CharacteristicProperty.WRITE_WITHOUT_RESPONSE,
+            )
+        ),
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
 private fun PreviewWriteDialog_smp() {
-    AppTheme {
-        WriteDialog(
-            characteristic = PreviewRemoteCharacteristic(
-                uuid = Uuid.parse("8d53dc1d-e380-4e46-a10a-d157b28b0000"),
-                properties = setOf(CharacteristicProperty.WRITE_WITHOUT_RESPONSE)
-            ),
-            initialValue = "01",
-            onDismissRequest = {},
-            onWrite = { _, _, _ -> }
-        )
-    }
+    PreviewWriteDialogContent(
+        characteristic = PreviewRemoteCharacteristic(
+            uuid = Uuid.parse("8d53dc1d-e380-4e46-a10a-d157b28b0000"),
+            properties = setOf(CharacteristicProperty.WRITE_WITHOUT_RESPONSE)
+        ),
+    )
 }
