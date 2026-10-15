@@ -48,7 +48,6 @@ import no.nordicsemi.kotlin.ble.core.Service
 import no.nordicsemi.kotlin.ble.core.and
 import no.nordicsemi.kotlin.ble.core.util.fromShortUuid
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -311,7 +310,6 @@ class GattServiceDiscoveryTest {
     }
 
     @Test
-    @Ignore("The mock reports an empty or failed service discovery as Discovered(empty) instead of Failed.")
     fun `discovery of a device without any services is reported as failed with EmptyResult`() = runTest {
         withTimeout(10.seconds) {
             val fixture = gattFixture { }
@@ -326,7 +324,6 @@ class GattServiceDiscoveryTest {
     }
 
     @Test
-    @Ignore("The mock reports an empty or failed service discovery as Discovered(empty) instead of Failed.")
     fun `failed discovery reported by the peripheral is not reported as Discovered`() = runTest {
         withTimeout(10.seconds) {
             val handler = GattHandler().apply { discoveryResult = ServiceDiscoveryResult.Failure }

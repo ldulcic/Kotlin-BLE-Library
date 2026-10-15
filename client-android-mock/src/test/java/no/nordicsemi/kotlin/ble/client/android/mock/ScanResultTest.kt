@@ -106,7 +106,9 @@ class ScanResultTest {
         connectable(
             name = GAP_NAME,
             eventHandler = object : PeripheralSpecEventHandler {},
-            services = {},
+            // A real device has at least the Generic Attribute service, and a discovery
+            // returning no services is reported as failed.
+            services = { GenericAttributeService() },
         )
         advertising(
             parameters = legacy(connectable = true),
