@@ -127,6 +127,11 @@ private open class ServiceScopeImpl(
                             instanceId = extPropHandle,
                         )
                     )
+                }
+
+                // The Extended Properties bit must be set if, and only if, the characteristic has
+                // a Characteristic Extended Properties Descriptor, no matter who added it.
+                if (scope.descriptors.any { it.uuid == Descriptor.CHAR_EXT_PROP_UUID }) {
                     properties += CharacteristicProperty.EXTENDED_PROPERTIES
                 }
 

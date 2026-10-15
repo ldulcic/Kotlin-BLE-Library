@@ -326,7 +326,6 @@ class ServerScopeImplTest {
     }
 
     @Test
-    @Ignore("ServerScopeImpl adds EXTENDED_PROPERTIES only for the automatic CEPD, not for an explicit one.")
     fun `explicit CEPD requires extended properties flag in characteristic properties`() {
         // Bluetooth Core Spec: the Characteristic Extended Properties descriptor exists
         // if and only if the Extended Properties bit is set in the characteristic properties.
