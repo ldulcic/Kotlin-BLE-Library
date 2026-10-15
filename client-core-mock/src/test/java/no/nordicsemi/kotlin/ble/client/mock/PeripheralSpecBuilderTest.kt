@@ -21,11 +21,36 @@ class PeripheralSpecBuilderTest {
 
     private val handler = object : PeripheralSpecEventHandler {}
 
+    /**
+     * Creates a connectable peripheral, for tests in which the way it is created is not the subject.
+     *
+     * A bonded peripheral is also known and has its services cached. [block] is applied after
+     * the peripheral is made connectable.
+     */
     private fun connectableSpec(
         proximity: Proximity = Proximity.IMMEDIATE,
+        identifier: String = "AA:BB:CC:DD:EE:01",
+        addressType: AddressType = AddressType.RANDOM_STATIC,
+        isBonded: Boolean = false,
+        isPhyCodedSupported: Boolean = false,
         block: PeripheralSpec.Builder<String>.() -> Unit = {},
-    ) = PeripheralSpec.simulatePeripheral("AA:BB:CC:DD:EE:01", proximity = proximity) {
-        connectable(name = "Device", eventHandler = handler, services = { })
+    ) = PeripheralSpec.simulatePeripheral(identifier, addressType, proximity = proximity) {
+        if (isBonded) {
+            connectable(
+                name = "Device",
+                isPhyCodedSupported = isPhyCodedSupported,
+                isBonded = true,
+                eventHandler = handler,
+                cachedServices = { },
+            )
+        } else {
+            connectable(
+                name = "Device",
+                isPhyCodedSupported = isPhyCodedSupported,
+                eventHandler = handler,
+                services = { },
+            )
+        }
         block()
     }
 
@@ -341,9 +366,11 @@ class PeripheralSpecBuilderTest {
 
     @Test
     fun `MAC change of disconnected peripheral changes address and forgets bond`() {
-        val spec = PeripheralSpec.simulatePeripheral("old", addressType = AddressType.RANDOM_PRIVATE_RESOLVABLE) {
-            connectable(name = "Cached", isBonded = true, eventHandler = handler, cachedServices = { })
-        }
+        val spec = connectableSpec(
+            identifier = "old",
+            addressType = AddressType.RANDOM_PRIVATE_RESOLVABLE,
+            isBonded = true,
+        )
         spec.simulateMacChange("new", AddressType.RANDOM_PRIVATE_RESOLVABLE)
         assertEquals("new", spec.identifier)
         assertFalse(spec.isKnown)
@@ -371,9 +398,7 @@ class PeripheralSpecBuilderTest {
 
     @Test
     fun `simulated connection negotiates MTU not larger than the maximum`() {
-        val spec = connectableSpec {
-            highSpeed()
-        }
+        val spec = connectableSpec { highSpeed() }
         spec.simulateConnection(mtu = 1000)
         assertEquals(498, spec.mtu)
     }
@@ -426,9 +451,7 @@ class PeripheralSpecBuilderTest {
 
     @Test
     fun `simulated connection uses requested PHY when supported`() {
-        val spec = PeripheralSpec.simulatePeripheral("id") {
-            connectable(name = "Coded", isPhyCodedSupported = true, eventHandler = handler, services = { })
-        }
+        val spec = connectableSpec(isPhyCodedSupported = true)
         spec.simulateConnection(phy = PrimaryPhy.PHY_LE_CODED)
         assertEquals(PhyInUse(Phy.PHY_LE_CODED, Phy.PHY_LE_CODED), spec.phy)
     }
