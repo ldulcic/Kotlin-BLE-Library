@@ -114,7 +114,11 @@ sealed class OperationStatus(
     object OutOfRange: ProfileError(0xFF)
 
     /** Unknown error. */
-    data class UnknownError(override val code: Int): OperationStatus(code)
+    data class UnknownError(override val code: Int): OperationStatus(code) {
+        // A data class generates its own toString(), which would hide the description of
+        // OperationStatus.
+        override fun toString() = super.toString()
+    }
 
     // These errors are mapped from non-Bluetooth status codes.
 

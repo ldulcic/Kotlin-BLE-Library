@@ -1,9 +1,9 @@
 package no.nordicsemi.kotlin.ble.core
 
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class OperationStatusTest {
@@ -118,13 +118,17 @@ class OperationStatusTest {
     }
 
     @Test
-    @Ignore("Needs triage: expected description of unknown OperationStatus codes is a guess.")
     fun `unknown error is described as unknown error`() {
         assertTrue(OperationStatus.UnknownError(0x77).toString().startsWith("Unknown Error"))
     }
 
     @Test
-    @Ignore("Needs triage: expected description of unknown OperationStatus codes is a guess.")
+    fun `unknown errors with the same code are equal`() {
+        assertEquals(OperationStatus.UnknownError(0x77), OperationStatus.UnknownError(0x77))
+        assertNotEquals<OperationStatus>(OperationStatus.UnknownError(0x77), OperationStatus.UnknownError(0x78))
+    }
+
+    @Test
     fun `description of an unknown error contains its code in hex`() {
         assertTrue(OperationStatus.UnknownError(0xAB).toString().contains("ab", ignoreCase = true))
     }
