@@ -48,7 +48,8 @@ import kotlin.uuid.Uuid
  * characteristics, and descriptors to uniquely identify them.
  */
 private class Handle {
-    private var value: Int = 0
+    // ATT handle 0x0000 is reserved, so the first handle is 1.
+    private var value: Int = 1
 
     /** Generates the next handle value. */
     fun next(): Int {
