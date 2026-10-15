@@ -151,6 +151,9 @@ sealed class ConnectionParameters {
         /**
          * Creates a connection parameters using [Duration] for interval and timeout.
          *
+         * The values are converted to the units of the protocol (1.25 ms for the interval and 10 ms
+         * for the timeout), rounding down.
+         *
          * @param connectionInterval Connection interval.
          * @param latency Connection latency.
          * @param supervisionTimeout Supervision timeout.
@@ -161,7 +164,9 @@ sealed class ConnectionParameters {
             latency: Int,
             supervisionTimeout: Duration,
         ): this(
-            connectionInterval = (connectionInterval.inWholeMilliseconds * 100 / 125L).toInt(),
+            // The unit is 1.25 ms, so the interval is converted from microseconds. Milliseconds
+            // would truncate 7.5 ms, the shortest interval, to 7 ms, which is below the minimum.
+            connectionInterval = (connectionInterval.inWholeMicroseconds / 1250L).toInt(),
             latency = latency,
             supervisionTimeout = (supervisionTimeout.inWholeMilliseconds / 10L).toInt(),
         )
