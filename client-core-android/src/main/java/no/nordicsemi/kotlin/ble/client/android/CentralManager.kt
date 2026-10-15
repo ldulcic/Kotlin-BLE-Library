@@ -35,8 +35,12 @@ package no.nordicsemi.kotlin.ble.client.android
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.Flow
 import no.nordicsemi.kotlin.ble.client.CentralManager
+import no.nordicsemi.kotlin.ble.client.android.exception.ScanningFailedToStartException
 import no.nordicsemi.kotlin.ble.client.exception.ConnectionFailedException
+import no.nordicsemi.kotlin.ble.client.exception.ScanningException
+import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.exception.BluetoothUnavailableException
 import no.nordicsemi.kotlin.ble.core.exception.ManagerClosedException
 import kotlin.time.Duration
@@ -47,7 +51,7 @@ import kotlin.time.Duration.Companion.seconds
  * Android-specific interface of the Central Manager.
  *
  * This interface extends [CentralManager] and adds support for bonded devices,
- * connecting using Android-specific connection options, and getting peripherals by their
+ * connecting and scanning using Android-specific options, and getting peripherals by their
  * MAC addresses.
  */
 interface CentralManager:
@@ -101,7 +105,42 @@ interface CentralManager:
      */
     suspend fun connect(peripheral: Peripheral, options: ConnectionOptions)
 
-    // TODO Add scanning with scan mode, PHY and legacy settings
+    /**
+     * Scans for Bluetooth LE devices using default scan options.
+     *
+     * The scan will be stopped after the given period of time or when the flow is canceled.
+     *
+     * @param timeout The scan duration. By default, the scan will run until the flow is closed.
+     * @param filter The filter to apply. By default, no filter is applied.
+     * @throws ManagerClosedException If the central manager has been closed.
+     * @throws BluetoothUnavailableException If Bluetooth is disabled or not available.
+     * @throws SecurityException If the permission to scan is denied.
+     * @throws ScanningException If an error occurred while starting the scan.
+     * @see [ScanOptions.Default]
+     */
+    override fun scan(
+        timeout: Duration,
+        filter: ConjunctionFilterScope.() -> Unit,
+    ): Flow<ScanResult> = scan(timeout, ScanOptions.Default, filter)
+
+    /**
+     * Scans for Bluetooth LE devices.
+     *
+     * The scan will be stopped after the given period of time or when the flow is canceled.
+     *
+     * @param timeout The scan duration. By default, the scan will run until the flow is closed.
+     * @param options Scan options, e.g. the scan mode.
+     * @param filter The filter to apply. By default, no filter is applied.
+     * @throws ManagerClosedException If the central manager has been closed.
+     * @throws BluetoothUnavailableException If Bluetooth is disabled or not available.
+     * @throws SecurityException If the permission to scan is denied.
+     * @throws ScanningException If an error occurred while starting the scan.
+     */
+    fun scan(
+        timeout: Duration = Duration.INFINITE,
+        options: ScanOptions,
+        filter: ConjunctionFilterScope.() -> Unit = {},
+    ): Flow<ScanResult>
 
     // TODO Add scan with Pending Intent (Android 8+, or for compat for legacy?)
 
@@ -173,5 +212,35 @@ interface CentralManager:
             override val automaticallyRequestHighestValueLength: Boolean = true,
             override val opportunistic: Boolean = false
         ): ConnectionOptions(automaticallyRequestHighestValueLength, opportunistic)
+    }
+
+    /**
+     * Android-specific scan options.
+     *
+     * @property mode The scan mode, which trades scanning latency for power consumption.
+     * Ignored before Android 5.
+     * @property passive Whether to scan passively. A passive scan doesn't send scan requests,
+     * so it doesn't get scan responses, which often contain the device name. In return, it uses
+     * less power and radio traffic. Available from Android 16 QPR2, ignored on older versions.
+     * @property legacyOnly Whether to report only legacy advertisements. By default, extended
+     * advertisements are reported as well, if the phone supports them (Android 8+).
+     * @property phy The primary PHY to scan on, or `null` to scan on all PHYs supported by the phone.
+     * Scanning on LE Coded requires Android 8 and a phone that supports it, otherwise the scan fails
+     * to start with [ScanningFailedToStartException]. Ignored when [legacyOnly] is set, as legacy
+     * advertisements are always sent on LE 1M.
+     */
+    data class ScanOptions(
+        val mode: ScanMode = ScanMode.LOW_LATENCY,
+        val passive: Boolean = false,
+        val legacyOnly: Boolean = false,
+        val phy: PrimaryPhy? = null,
+    ) {
+        companion object {
+            /**
+             * Default scan options: active scanning in low latency mode on all supported PHYs,
+             * reporting both legacy and extended advertisements.
+             */
+            val Default = ScanOptions()
+        }
     }
 }
