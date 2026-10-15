@@ -144,10 +144,11 @@ class GattErrorsTest {
     }
 
     @Test
-    @Ignore("Needs triage: an operation in progress when the link is lost does not fail with InvalidAttributeException.")
     fun `read in progress when the peripheral disconnects fails instead of hanging`() = runTest {
         withTimeout(10.seconds) {
-            val fixture = readWriteFixture()
+            // An empty value is read immediately. A long value takes a few connection intervals.
+            val handler = GattHandler().apply { readHandler = { ReadResponse.Success(gattBytes(100)) } }
+            val fixture = readWriteFixture(handler)
             val characteristic = fixture.characteristic()
             val read = async { runCatching { characteristic.read() } }
             runCurrent()
@@ -160,7 +161,6 @@ class GattErrorsTest {
     }
 
     @Test
-    @Ignore("Needs triage: an operation in progress when the link is lost does not fail with InvalidAttributeException.")
     fun `write in progress when the peripheral disconnects fails instead of hanging`() = runTest {
         withTimeout(10.seconds) {
             val fixture = readWriteFixture()
@@ -172,6 +172,64 @@ class GattErrorsTest {
 
             val result = write.await()
             assertIs<InvalidAttributeException>(result.exceptionOrNull())
+        }
+    }
+
+    @Test
+    fun `short write in progress when the peripheral disconnects fails instead of hanging`() = runTest {
+        withTimeout(10.seconds) {
+            val fixture = readWriteFixture()
+            val characteristic = fixture.characteristic()
+            val write = async { runCatching { characteristic.write(gattBytes(1)) } }
+            runCurrent()
+
+            fixture.spec.simulateDisconnection()
+
+            assertIs<InvalidAttributeException>(write.await().exceptionOrNull())
+        }
+    }
+
+    @Test
+    fun `descriptor read in progress when the peripheral disconnects fails instead of hanging`() = runTest {
+        withTimeout(10.seconds) {
+            val handler = GattHandler().apply { descriptorReadHandler = { ReadResponse.Success(gattBytes(100)) } }
+            val fixture = readWriteFixture(handler)
+            val descriptor = fixture.descriptor()
+            val read = async { runCatching { descriptor.read() } }
+            runCurrent()
+
+            fixture.spec.simulateDisconnection()
+
+            assertIs<InvalidAttributeException>(read.await().exceptionOrNull())
+        }
+    }
+
+    @Test
+    fun `descriptor write in progress when the peripheral disconnects fails instead of hanging`() = runTest {
+        withTimeout(10.seconds) {
+            val fixture = readWriteFixture()
+            val descriptor = fixture.descriptor()
+            val write = async { runCatching { descriptor.write(gattBytes(100)) } }
+            runCurrent()
+
+            fixture.spec.simulateDisconnection()
+
+            assertIs<InvalidAttributeException>(write.await().exceptionOrNull())
+        }
+    }
+
+    @Test
+    fun `operation that completes before the peripheral disconnects is not affected`() = runTest {
+        withTimeout(10.seconds) {
+            val handler = GattHandler().apply { readHandler = { ReadResponse.Success(gattBytes(10)) } }
+            val fixture = readWriteFixture(handler)
+            val characteristic = fixture.characteristic()
+
+            val value = characteristic.read()
+            fixture.spec.simulateDisconnection()
+            gattSettle()
+
+            assertContentEquals(gattBytes(10), value)
         }
     }
 

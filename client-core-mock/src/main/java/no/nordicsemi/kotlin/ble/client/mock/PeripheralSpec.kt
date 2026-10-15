@@ -495,6 +495,45 @@ class PeripheralSpec<ID: Any> private constructor(
         }
     }
 
+    /**
+     * Emulates the time it takes to transfer a single Write or Read packet, see
+     * [estimateTransferDuration], by waiting for it.
+     *
+     * If the link is lost in the meantime, i.e. the peripheral is no longer connected, the
+     * operation does not complete: this method throws [IllegalStateException], which the client
+     * reports as [no.nordicsemi.kotlin.ble.client.exception.InvalidAttributeException], as the
+     * attribute has been invalidated. The client also gets the disconnection event.
+     *
+     * @param value The attribute value to be written or read.
+     * @param isWrite Whether this is a Write, as opposed to a Read.
+     * @param withResponse Whether the operation requires a response.
+     * @throws IllegalStateException If the peripheral is not connected.
+     */
+    internal suspend fun emulateTransferDuration(
+        value: ByteArray,
+        isWrite: Boolean,
+        withResponse: Boolean = true,
+    ) {
+        delay(estimateTransferDuration(value, isWrite, withResponse))
+        check(isConnected) { "The peripheral disconnected during the operation" }
+    }
+
+    /**
+     * Emulates the delay of a single connection interval, in which a packet that does not carry
+     * a value, like an error response, is delivered, by waiting for it.
+     *
+     * Like [emulateTransferDuration], it throws [IllegalStateException] if the peripheral is not
+     * connected after the delay.
+     *
+     * @throws IllegalStateException If the peripheral is not connected.
+     */
+    internal suspend fun emulateDelay() {
+        val connectionInterval = checkNotNull(connectionParameters) { "Peripheral not connected" }
+            .connectionIntervalMillis.milliseconds
+        delay(connectionInterval)
+        check(isConnected) { "The peripheral disconnected during the operation" }
+    }
+
     companion object {
 
         /**

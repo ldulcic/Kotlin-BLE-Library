@@ -31,7 +31,6 @@
 
 package no.nordicsemi.kotlin.ble.client.mock.internal
 
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.SharedFlow
 import no.nordicsemi.kotlin.ble.client.AnyRemoteService
@@ -53,7 +52,6 @@ import no.nordicsemi.kotlin.ble.core.Permission
 import no.nordicsemi.kotlin.ble.core.Service
 import no.nordicsemi.kotlin.ble.core.WriteType
 import no.nordicsemi.kotlin.ble.core.internal.CharacteristicDefinition
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
 
 class MockRemoteCharacteristic(
@@ -75,13 +73,12 @@ class MockRemoteCharacteristic(
 
     override suspend fun FlowCollector<GattEvent>.executeRead() {
         val eventHandler = checkNotNull(peripheralSpec.eventHandler)
-        val connectionInterval = checkNotNull(peripheralSpec.connectionParameters)
-            .connectionIntervalMillis.milliseconds
+        check(peripheralSpec.isConnected) { "Peripheral not connected" }
 
         // Ensure that the services are valid.
         check(peripheralSpec.isServiceCacheValid) {
             // The response is delivered in the next connection interval.
-            delay(connectionInterval)
+            peripheralSpec.emulateDelay()
             emit(CharacteristicRead(
                 characteristic = this@MockRemoteCharacteristic,
                 value = byteArrayOf(),
@@ -105,7 +102,7 @@ class MockRemoteCharacteristic(
         }
         status?.let { status ->
             // The response is delivered in the next connection interval.
-            delay(connectionInterval)
+            peripheralSpec.emulateDelay()
             emit(CharacteristicRead(
                 characteristic = this@MockRemoteCharacteristic,
                 value = byteArrayOf(),
@@ -143,9 +140,7 @@ class MockRemoteCharacteristic(
                 val truncatedData = result.value.take(512).toByteArray()
                 // Reading descriptor value takes time depending on the size of the value
                 // and connection parameters.
-                val duration =
-                    peripheralSpec.estimateTransferDuration(truncatedData, isWrite = false)
-                delay(duration)
+                peripheralSpec.emulateTransferDuration(truncatedData, isWrite = false)
                 emit(CharacteristicRead(
                     characteristic = this@MockRemoteCharacteristic,
                     value = truncatedData,
@@ -154,7 +149,7 @@ class MockRemoteCharacteristic(
             }
             is ReadResponse.Failure -> {
                 // The read response is delivered in the next connection interval.
-                delay(connectionInterval)
+                peripheralSpec.emulateDelay()
                 emit(CharacteristicRead(
                     characteristic = this@MockRemoteCharacteristic,
                     value = byteArrayOf(),
@@ -166,15 +161,14 @@ class MockRemoteCharacteristic(
 
     override suspend fun FlowCollector<GattEvent>.executeWrite(data: ByteArray, writeType: WriteType) {
         val eventHandler = checkNotNull(peripheralSpec.eventHandler)
-        val connectionInterval = checkNotNull(peripheralSpec.connectionParameters)
-            .connectionIntervalMillis.milliseconds
+        check(peripheralSpec.isConnected) { "Peripheral not connected" }
 
         when (writeType == WriteType.WITH_RESPONSE) {
             true -> {
                 // Ensure that the services are valid.
                 check(peripheralSpec.isServiceCacheValid) {
                     // The response is delivered in the next connection interval.
-                    delay(connectionInterval)
+                    peripheralSpec.emulateDelay()
                     emit(CharacteristicWrite(
                         characteristic = this@MockRemoteCharacteristic,
                         // TODO Verify if this is the correct status to use.
@@ -197,7 +191,7 @@ class MockRemoteCharacteristic(
                 }
                 status?.let { status ->
                     // The response is delivered in the next connection interval.
-                    delay(connectionInterval)
+                    peripheralSpec.emulateDelay()
                     emit(CharacteristicWrite(
                         characteristic = this@MockRemoteCharacteristic,
                         status = status,
@@ -233,9 +227,7 @@ class MockRemoteCharacteristic(
                             is PrepareWriteResponse.Success -> {
                                 // Writing characteristic value takes time depending on the size of the value
                                 // and connection parameters.
-                                val duration =
-                                    peripheralSpec.estimateTransferDuration(data, isWrite = true, withResponse = true)
-                                delay(duration)
+                                peripheralSpec.emulateTransferDuration(data, isWrite = true, withResponse = true)
                                 // Validate received data. In case of an incorrect data, throw an exception.
                                 val match = truncatedData.contentEquals(response.value)
                                 // When not in Reliable Write, Long Write automatically executes or
@@ -246,7 +238,7 @@ class MockRemoteCharacteristic(
                                         is WriteResponse.Success -> { /* no-op */ }
                                         is WriteResponse.Failure -> status = response.status
                                     }
-                                    delay(connectionInterval)
+                                    peripheralSpec.emulateDelay()
                                 }
                                 if (!match) {
                                     throw ValueDoesNotMatchException()
@@ -259,7 +251,7 @@ class MockRemoteCharacteristic(
 
                             is PrepareWriteResponse.Failure -> {
                                 // The read response is delivered in the next connection interval.
-                                delay(connectionInterval)
+                                peripheralSpec.emulateDelay()
                                 emit(CharacteristicWrite(
                                     characteristic = this@MockRemoteCharacteristic,
                                     status = response.status,
@@ -277,9 +269,7 @@ class MockRemoteCharacteristic(
                             is WriteResponse.Success -> {
                                 // Writing characteristic value takes time depending on the size of the value
                                 // and connection parameters.
-                                val duration =
-                                    peripheralSpec.estimateTransferDuration(data, isWrite = true, withResponse = true)
-                                delay(duration)
+                                peripheralSpec.emulateTransferDuration(data, isWrite = true, withResponse = true)
                                 emit(CharacteristicWrite(
                                     characteristic = this@MockRemoteCharacteristic,
                                     status = OperationStatus.Success,
@@ -288,7 +278,7 @@ class MockRemoteCharacteristic(
 
                             is WriteResponse.Failure -> {
                                 // The read response is delivered in the next connection interval.
-                                delay(connectionInterval)
+                                peripheralSpec.emulateDelay()
                                 emit(CharacteristicWrite(
                                     characteristic = this@MockRemoteCharacteristic,
                                     status = result.status,
@@ -316,9 +306,7 @@ class MockRemoteCharacteristic(
                 )
                 // Writing characteristic value takes time depending on the size of the value.
                 // Multiple packets may be sent in one connection interval.
-                val duration =
-                    peripheralSpec.estimateTransferDuration(truncatedData, isWrite = true, withResponse = false)
-                delay(duration)
+                peripheralSpec.emulateTransferDuration(truncatedData, isWrite = true, withResponse = false)
 
                 // The flow is suspended and awaits for CharacteristicWrite event.
                 // Even though there is no response for this operation, we need to
