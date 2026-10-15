@@ -45,6 +45,8 @@ import no.nordicsemi.kotlin.ble.client.android.CentralManager
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.mock.AddressType
 import no.nordicsemi.kotlin.ble.client.mock.DisconnectionReason
+import no.nordicsemi.kotlin.ble.core.PrimaryPhy
+import no.nordicsemi.kotlin.ble.client.mock.ConnectionResult
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpecEventHandler
 import no.nordicsemi.kotlin.ble.client.mock.Proximity
@@ -69,6 +71,17 @@ private const val ADDRESS = "CA:FE:00:00:00:01"
  * state reacts to events coming from the peripheral and from the manager.
  */
 class ConnectionStateTest {
+
+    /** Counts the connection requests, and accepts them unless [result] is changed. */
+    private class ConnectionRequests : PeripheralSpecEventHandler {
+        var count = 0
+        var result: ConnectionResult = ConnectionResult.Accept
+
+        override fun onConnectionRequest(phy: PrimaryPhy): ConnectionResult {
+            count++
+            return result
+        }
+    }
 
     private class Events : PeripheralSpecEventHandler {
         val connectionsLost = mutableListOf<DisconnectionReason>()
@@ -331,7 +344,6 @@ class ConnectionStateTest {
     }
 
     @Test
-    @Ignore("The mock does not re-establish an auto-connect link after the device comes back in range.")
     fun `auto connect peripheral reconnects when it gets back in range`() = runTest {
         val spec = spec()
         val manager = manager(spec)
@@ -344,6 +356,121 @@ class ConnectionStateTest {
         settle(10.seconds)
 
         assertEquals(ConnectionState.Connected, peripheral.state.value)
+    }
+
+    @Test
+    fun `auto connect peripheral reconnects after link loss when it stays in range`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(requests)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+
+        // The peripheral resets, so the link is lost, and it starts advertising again.
+        spec.simulateReset()
+        settle(10.seconds)
+
+        assertEquals(ConnectionState.Connected, peripheral.state.value)
+        assertEquals(2, requests.count)
+    }
+
+    @Test
+    fun `auto connect peripheral waits for the device while it is out of range`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(requests)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+
+        spec.simulateProximityChange(Proximity.OUT_OF_RANGE)
+        settle(60.seconds)
+
+        assertEquals(ConnectionState.Connecting, peripheral.state.value)
+        assertEquals(1, requests.count)
+    }
+
+    @Test
+    fun `auto connect peripheral reconnects every time the link is lost`() = runTest {
+        val spec = spec()
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+
+        repeat(3) {
+            spec.simulateProximityChange(Proximity.OUT_OF_RANGE)
+            settle(5.seconds)
+            spec.simulateProximityChange(Proximity.NEAR)
+            settle(10.seconds)
+
+            assertEquals(ConnectionState.Connected, peripheral.state.value)
+        }
+    }
+
+    @Test
+    fun `auto connect peripheral keeps trying when the reconnection is denied`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(requests)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+
+        requests.result = ConnectionResult.Deny
+        spec.simulateReset()
+        settle(10.seconds)
+        assertEquals(ConnectionState.Connecting, peripheral.state.value)
+
+        requests.result = ConnectionResult.Accept
+        settle(10.seconds)
+        assertEquals(ConnectionState.Connected, peripheral.state.value)
+    }
+
+    @Test
+    fun `auto connect peripheral does not reconnect after the client disconnected`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(requests)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+
+        peripheral.disconnect()
+        settle(10.seconds)
+
+        assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(1, requests.count)
+    }
+
+    @Test
+    fun `auto connect peripheral does not reconnect after the manager is closed`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(requests)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, CentralManager.ConnectionOptions.AutoConnect())
+
+        spec.simulateProximityChange(Proximity.OUT_OF_RANGE)
+        settle(5.seconds)
+        manager.close()
+        spec.simulateProximityChange(Proximity.NEAR)
+        settle(10.seconds)
+
+        assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(1, requests.count)
+    }
+
+    @Test
+    fun `direct connection does not reconnect after link loss`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(requests)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, CentralManager.ConnectionOptions.Direct())
+
+        spec.simulateReset()
+        settle(10.seconds)
+
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(Reason.LinkLoss, state.reason)
+        assertEquals(1, requests.count)
     }
 
     @Test
