@@ -32,15 +32,19 @@
 package no.nordicsemi.kotlin.ble.client.mock.internal
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 import no.nordicsemi.kotlin.ble.client.GattEvent
 import no.nordicsemi.kotlin.ble.client.Peripheral
 import no.nordicsemi.kotlin.ble.client.RemoteService
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.core.ConnectionState
 import no.nordicsemi.kotlin.ble.core.ConnectionState.Disconnected.Reason
-import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.core.log.Layer
 import no.nordicsemi.kotlin.ble.core.mock.MockEnvironment
 import no.nordicsemi.kotlin.log.Log
@@ -85,8 +89,26 @@ open class MockExecutor(
     protected var gatt: PeripheralSpec<*>.Api? = null
         private set
 
-    override val events: SharedFlow<GattEvent>
-        get() = peripheralSpec.events
+    /**
+     * The events of this client.
+     *
+     * A peripheral may have several clients, each with its own [MockExecutor]. This flow gets
+     * the events that concern the whole connection, which are emitted by the peripheral to all
+     * its clients (link loss, notifications, MTU change, etc.), and the events that are meant only
+     * for this client, e.g. the result of its own disconnection or service discovery, which are
+     * emitted by [PeripheralSpec.Api] of this client.
+     */
+    private val clientEvents = MutableSharedFlow<GattEvent>(extraBufferCapacity = 64)
+
+    override val events: SharedFlow<GattEvent> = clientEvents.asSharedFlow()
+
+    init {
+        // Forward the events of the peripheral to this client. Unconfined and undispatched, so
+        // that the subscription is made right away, and the events are forwarded as they are emitted.
+        scope.launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+            peripheralSpec.events.collect { clientEvents.emit(it) }
+        }
+    }
 
     override val isClosed: Boolean
         get() = gatt == null
@@ -96,7 +118,15 @@ open class MockExecutor(
         autoMtu: Boolean,
         opportunistic: Boolean,
     ) {
-        gatt = peripheralSpec.connectGatt(environment, autoConnect, autoMtu, opportunistic, advertisements, scope)
+        gatt = peripheralSpec.connectGatt(
+            environment = environment,
+            autoConnect = autoConnect,
+            autoMtu = autoMtu,
+            opportunistic = opportunistic,
+            advertisements = advertisements,
+            managerScope = scope,
+            clientEvents = clientEvents,
+        )
     }
 
     override suspend fun discoverServices(uuids: List<Uuid>): Boolean {
