@@ -520,7 +520,7 @@ class ScanResultTest {
         advance(1.seconds)
 
         assertTrue(results.isNotEmpty())
-        assertTrue(results.none { it.rssi == -128 })
+        assertTrue(results.none { it.rssi == -127 })
     }
 
     @Test

@@ -43,13 +43,17 @@ enum class Proximity {
     NEAR,
     /** The device is far, will have RSSI values around -100 dBm. */
     FAR,
-    /** The device is out of range. */
+    /**
+     * The device is out of range. It is not scanned, and its RSSI, if it is read when the link
+     * is still up, is the lowest valid one: -127 dBm.
+     */
     OUT_OF_RANGE;
 
     internal fun randomRssi(): Int = when (this) {
         IMMEDIATE -> Random.nextInt(-50, -36)
         NEAR -> Random.nextInt(-70, -50)
         FAR -> Random.nextInt(-100, -80)
-        OUT_OF_RANGE -> -128
+        // The lowest value of the RSSI of ScanResult is -127.
+        OUT_OF_RANGE -> -127
     }
 }
