@@ -83,16 +83,49 @@ abstract class CentralManagerImpl<
     }
 
     /**
-     * A list of peripherals managed by this Central Manager instance.
+     * Guards [managedPeripherals].
+     *
+     * Peripherals are looked up and added from scan callbacks, which may be called on a different
+     * thread than the one the application uses the manager on (for example, the Binder thread
+     * on Android 4.3 and 4.4), and from the application itself.
      */
-    protected val managedPeripherals = mutableMapOf<ID, P>()
+    private val peripheralsLock = Any()
+
+    /**
+     * A list of peripherals managed by this Central Manager instance.
+     *
+     * Always access it while holding [peripheralsLock].
+     */
+    private val managedPeripherals = mutableMapOf<ID, P>()
+
+    /**
+     * Returns a snapshot of the peripherals managed by this Central Manager instance.
+     */
+    protected fun managedPeripherals(): List<P> = synchronized(peripheralsLock) {
+        managedPeripherals.values.toList()
+    }
+
+    /**
+     * Adds the given peripheral to the peripherals managed by this Central Manager instance,
+     * replacing the one with the same ID, if any.
+     */
+    protected fun addPeripheral(id: ID, peripheral: P) {
+        synchronized(peripheralsLock) {
+            managedPeripherals[id] = peripheral
+        }
+    }
 
     /**
      * Checks whether the given peripheral was obtained using this instance
      * of the Central Manager.
      */
     protected fun checkPeripheral(peripheral: P) {
-        require(managedPeripherals.containsValue(peripheral)) {
+        // The same instance is required. Peripherals are equal when they have the same ID,
+        // so a peripheral obtained using another Central Manager would pass equals().
+        val isManaged = synchronized(peripheralsLock) {
+            managedPeripherals.values.any { it === peripheral }
+        }
+        require(isManaged) {
             "$peripheral was not obtained using this Central Manager instance"
         }
     }
@@ -101,14 +134,15 @@ abstract class CentralManagerImpl<
      * Returns the [Peripheral] object associated with given [id].
      *
      * If the Central Manager engine does not have a matching peripheral, the factory method
-     * is called to create it.
+     * is called to create it. This method is thread-safe: for each ID only one peripheral is
+     * created, also when called from several threads at the same time.
      *
      * @param id The peripheral ID.
      * @param factory A lambda that should return a new peripheral instance for the given ID.
      * @return The peripheral.
      */
-    protected fun peripheral(id: ID, factory: (ID) -> P): P {
-        return managedPeripherals.getOrPut(id) {
+    protected fun peripheral(id: ID, factory: (ID) -> P): P = synchronized(peripheralsLock) {
+        managedPeripherals.getOrPut(id) {
             factory(id).also { newPeripheral ->
                 // Make sure the new peripheral is closed when the manager gets closed or
                 // the scope gets canceled.

@@ -339,7 +339,6 @@ class ConnectionFailureTest {
     }
 
     @Test
-    @Ignore("checkPeripheral compares peripherals by identifier only, so a foreign peripheral passes.")
     fun `connecting a peripheral obtained from another manager throws`() = runTest {
         val spec = spec()
         val manager = newManager(spec)
