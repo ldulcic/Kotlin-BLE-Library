@@ -38,6 +38,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
 import no.nordicsemi.kotlin.ble.client.android.CentralManager.ConnectionOptions
@@ -120,7 +121,6 @@ class ConnectionFailureTest {
     }
 
     @Test
-    @Ignore("Reason.Timeout is reported from System.currentTimeMillis() elapsed time instead of the configured timeout (wrong under virtual time).")
     fun `direct connection timeout is the one set in the options`() = runTest {
         val manager = newManager(spec(proximity = Proximity.OUT_OF_RANGE))
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
@@ -132,6 +132,77 @@ class ConnectionFailureTest {
         assertEquals(3_000, testScheduler.currentTime)
         val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
         assertEquals(Reason.Timeout(3.seconds), state.reason)
+    }
+
+    @Test
+    fun `timeout reason of the default connection options is their timeout`() = runTest {
+        val manager = newManager(spec(proximity = Proximity.OUT_OF_RANGE))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        assertFailsWith<TimeoutCancellationException> { manager.connect(peripheral) }
+
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(Reason.Timeout(10.seconds), state.reason)
+    }
+
+    @Test
+    fun `timeout reason of a direct connection is the timeout of the options also when it is not a whole number of seconds`() = runTest {
+        val manager = newManager(spec(proximity = Proximity.OUT_OF_RANGE))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        assertFailsWith<TimeoutCancellationException> {
+            manager.connect(peripheral, ConnectionOptions.Direct(timeout = 2500.milliseconds))
+        }
+
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(Reason.Timeout(2500.milliseconds), state.reason)
+    }
+
+    @Test
+    fun `timeout reason of a direct connection is the timeout of withTimeout when it fires first`() = runTest {
+        val manager = newManager(spec(proximity = Proximity.OUT_OF_RANGE))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        assertFailsWith<TimeoutCancellationException> {
+            withTimeout(2.seconds) {
+                manager.connect(peripheral, ConnectionOptions.Direct(timeout = 30.seconds))
+            }
+        }
+
+        assertEquals(2_000, testScheduler.currentTime)
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(Reason.Timeout(2.seconds), state.reason)
+    }
+
+    @Test
+    fun `timeout reason of a direct connection is the timeout of the options when it fires first`() = runTest {
+        val manager = newManager(spec(proximity = Proximity.OUT_OF_RANGE))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        assertFailsWith<TimeoutCancellationException> {
+            withTimeout(30.seconds) {
+                manager.connect(peripheral, ConnectionOptions.Direct(timeout = 3.seconds))
+            }
+        }
+
+        assertEquals(3_000, testScheduler.currentTime)
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(Reason.Timeout(3.seconds), state.reason)
+    }
+
+    @Test
+    fun `timeout reason of an auto connect connection is the timeout of withTimeout`() = runTest {
+        val manager = newManager(spec(proximity = Proximity.OUT_OF_RANGE))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        assertFailsWith<TimeoutCancellationException> {
+            withTimeout(4.seconds) {
+                manager.connect(peripheral, ConnectionOptions.AutoConnect())
+            }
+        }
+
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(Reason.Timeout(4.seconds), state.reason)
     }
 
     @Test
