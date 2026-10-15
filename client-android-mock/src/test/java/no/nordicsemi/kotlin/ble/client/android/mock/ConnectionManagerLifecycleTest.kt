@@ -36,6 +36,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -252,7 +253,6 @@ class ConnectionManagerLifecycleTest {
     }
 
     @Test
-    @Ignore("CentralManager.close() does not close its peripherals.")
     fun `peripheral of a closed manager stays disconnected`() = runTest {
         val manager = newManager(spec())
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
@@ -261,6 +261,32 @@ class ConnectionManagerLifecycleTest {
         runCurrent()
 
         assertFalse(peripheral.isConnected)
+    }
+
+    @Test
+    fun `closing the manager disconnects all its peripherals`() = runTest {
+        val manager = newManager(spec(ADDRESS), spec(OTHER_ADDRESS))
+        val first = checkNotNull(manager.getPeripheralById(ADDRESS))
+        val second = checkNotNull(manager.getPeripheralById(OTHER_ADDRESS))
+        manager.connect(first)
+        manager.connect(second)
+
+        manager.close()
+        runCurrent()
+
+        assertFalse(first.isConnected)
+        assertFalse(second.isConnected)
+    }
+
+    @Test
+    fun `closing the manager does not cancel the scope given to it`() = runTest {
+        val scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
+        val manager = CentralManager.mock(scope = scope).apply { simulatePeripherals(listOf(spec())) }
+
+        manager.close()
+        runCurrent()
+
+        assertTrue(scope.isActive)
     }
 
     @Test

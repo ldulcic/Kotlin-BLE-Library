@@ -376,7 +376,6 @@ class ConnectionStateTest {
     }
 
     @Test
-    @Ignore("CentralManager.close() does not close its peripherals.")
     fun `closing the manager disconnects its peripherals`() = runTest {
         val manager = manager(spec())
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
