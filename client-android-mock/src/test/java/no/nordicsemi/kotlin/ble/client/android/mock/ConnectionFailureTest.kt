@@ -54,9 +54,9 @@ import no.nordicsemi.kotlin.ble.core.LegacyAdvertisingSetParameters
 import no.nordicsemi.kotlin.ble.core.PrimaryPhy
 import no.nordicsemi.kotlin.ble.environment.android.mock.MockAndroidEnvironment
 import kotlin.test.Test
-import kotlin.test.Ignore
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -364,8 +364,109 @@ class ConnectionFailureTest {
         assertEquals(ConnectionState.Disconnected(Reason.Cancelled), peripheral.state.value)
     }
 
+    /** Counts the connection requests the peripheral gets. */
+    private class ConnectionRequests : PeripheralSpecEventHandler {
+        var count = 0
+
+        override fun onConnectionRequest(phy: PrimaryPhy): ConnectionResult {
+            count++
+            return ConnectionResult.Accept
+        }
+    }
+
     @Test
-    @Ignore("Needs triage: the test hangs; test or library?")
+    fun `device that appears after a pending connection was cancelled is not connected`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(proximity = Proximity.OUT_OF_RANGE, eventHandler = requests)
+        val manager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        val job = async { runCatching { manager.connect(peripheral, ConnectionOptions.AutoConnect()) } }
+        advanceTimeBy(1.minutes)
+        runCurrent()
+
+        peripheral.disconnect()
+        runCurrent()
+        spec.simulateProximityChange(Proximity.NEAR)
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        assertFalse(spec.isConnected)
+        assertEquals(0, requests.count)
+        assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertNotNull(job.await().exceptionOrNull())
+    }
+
+    @Test
+    fun `disconnect cancels a pending direct connection attempt`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(proximity = Proximity.OUT_OF_RANGE, eventHandler = requests)
+        val manager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        val job = async {
+            runCatching { manager.connect(peripheral, ConnectionOptions.Direct(timeout = 1.minutes)) }
+        }
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(ConnectionState.Connecting, peripheral.state.value)
+
+        peripheral.disconnect()
+        runCurrent()
+        spec.simulateProximityChange(Proximity.NEAR)
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        assertFalse(spec.isConnected)
+        assertEquals(0, requests.count)
+        assertNotNull(job.await().exceptionOrNull())
+    }
+
+    @Test
+    fun `cancelling the coroutine of a pending connection attempt does not connect the device later`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(proximity = Proximity.OUT_OF_RANGE, eventHandler = requests)
+        val manager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        val job = async { manager.connect(peripheral, ConnectionOptions.AutoConnect()) }
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        job.cancel()
+        runCurrent()
+        spec.simulateProximityChange(Proximity.NEAR)
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        assertFalse(spec.isConnected)
+        assertEquals(0, requests.count)
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(Reason.Cancelled, state.reason)
+    }
+
+    @Test
+    fun `auto connect peripheral waiting for the link to come back can be disconnected`() = runTest {
+        val requests = ConnectionRequests()
+        val spec = spec(eventHandler = requests)
+        val manager = newManager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, ConnectionOptions.AutoConnect())
+        spec.simulateProximityChange(Proximity.OUT_OF_RANGE)
+        advanceTimeBy(10.seconds)
+        runCurrent()
+        assertEquals(ConnectionState.Connecting, peripheral.state.value)
+
+        peripheral.disconnect()
+        runCurrent()
+        spec.simulateProximityChange(Proximity.NEAR)
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(Reason.Success, state.reason)
+        assertFalse(spec.isConnected)
+        assertEquals(1, requests.count)
+    }
+
+    @Test
     fun `disconnect cancels a pending connection attempt`() = runTest {
         val manager = newManager(spec(proximity = Proximity.OUT_OF_RANGE))
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
