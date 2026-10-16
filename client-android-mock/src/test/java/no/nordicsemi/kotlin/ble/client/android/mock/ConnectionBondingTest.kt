@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
@@ -510,6 +511,60 @@ class ConnectionBondingTest {
 
         assertEquals(BondState.BONDED, peripheral.bondState.value)
         assertEquals(null, spec.bondFailureReason)
+    }
+
+    private fun rejectingHandler() = object : PeripheralSpecEventHandler {
+        override fun onBondRequest() = BondResult.Reject()
+    }
+
+    @Test
+    fun `auto connect peripheral is disconnected when the link is lost after bonding failed`() = runTest {
+        // Android terminates the link after a failed pairing, and then it does not reconnect,
+        // although the connection was started with auto connect.
+        val spec = spec(isBonded = false, eventHandler = rejectingHandler())
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, ConnectionOptions.AutoConnect())
+        assertFailsWith<BondingFailedException> { peripheral.createBond() }
+
+        spec.simulateReset()
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(ConnectionState.Disconnected.Reason.LinkLoss, state.reason)
+    }
+
+    @Test
+    fun `auto connect peripheral reconnects after the link is lost when bonding succeeded`() = runTest {
+        val spec = spec(isBonded = false)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, ConnectionOptions.AutoConnect())
+        peripheral.createBond()
+
+        spec.simulateReset()
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        assertEquals(ConnectionState.Connected, peripheral.state.value)
+    }
+
+    @Test
+    fun `auto connect after a failed bonding reconnects again`() = runTest {
+        val spec = spec(isBonded = false, eventHandler = rejectingHandler())
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral, ConnectionOptions.AutoConnect())
+        assertFailsWith<BondingFailedException> { peripheral.createBond() }
+        peripheral.disconnect()
+
+        manager.connect(peripheral, ConnectionOptions.AutoConnect())
+        spec.simulateReset()
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        assertEquals(ConnectionState.Connected, peripheral.state.value)
     }
 }
 
