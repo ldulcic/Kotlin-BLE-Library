@@ -37,5 +37,35 @@ import no.nordicsemi.kotlin.ble.core.exception.BluetoothException
  * An exception thrown when bonding process failed.
  *
  * This may be caused by invalid PIN / passphrase, rejecting pairing or an internal error.
+ *
+ * @property reason The reason why bonding failed, as reported by the system. [Reason.Unknown] if
+ * the system does not report it.
  */
-class BondingFailedException: BluetoothException("Bonding failed")
+class BondingFailedException(
+    val reason: Reason = Reason.Unknown,
+): BluetoothException("Bonding failed: $reason") {
+
+    /** The reason why bonding failed. */
+    enum class Reason {
+        /** The system did not report the reason. */
+        Unknown,
+        /** The authentication failed, e.g. the PIN or passkey was wrong. */
+        AuthenticationFailed,
+        /** The peripheral rejected the pairing. */
+        AuthenticationRejected,
+        /** The pairing was cancelled by the user. */
+        AuthenticationCanceled,
+        /** The peripheral did not respond, for example it disconnected. */
+        RemoteDeviceDown,
+        /** Bonding was not possible because a discovery was in progress. */
+        DiscoveryInProgress,
+        /** The authentication timed out. */
+        AuthenticationTimeout,
+        /** Bonding was attempted too many times in a row. */
+        RepeatedAttempts,
+        /** The peripheral cancelled the pairing. */
+        RemoteAuthenticationCanceled,
+        /** The bond was removed. */
+        Removed,
+    }
+}

@@ -81,8 +81,23 @@ sealed class BondResult {
     object Accept : BondResult()
     /**
      * The bonding failed, for example because the user cancelled it or entered a wrong PIN.
+     *
+     * @param reason The reason of the failure, reported to the client.
      */
-    object Reject : BondResult()
+    data class Reject(val reason: Reason = Reason.Rejected) : BondResult() {
+
+        /** The reason of a failed bonding. */
+        enum class Reason {
+            /** The peripheral rejected the pairing. This is the default. */
+            Rejected,
+            /** The user cancelled the pairing. */
+            Cancelled,
+            /** The authentication failed, e.g. the PIN was wrong. */
+            AuthenticationFailed,
+            /** The pairing timed out. */
+            Timeout,
+        }
+    }
 }
 
 /**

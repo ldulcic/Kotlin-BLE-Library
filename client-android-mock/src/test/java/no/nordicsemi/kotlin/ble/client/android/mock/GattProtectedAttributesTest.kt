@@ -173,7 +173,7 @@ class GattProtectedAttributesTest {
     @Test
     fun `encrypted descriptor read fails with InsufficientAuthentication when bonding is rejected`() = runTest {
         withTimeout(10.seconds) {
-            val handler = GattHandler().apply { bondResult = BondResult.Reject }
+            val handler = GattHandler().apply { bondResult = BondResult.Reject() }
             val fixture = gattFixture(handler) {
                 Service(GATT_SERVICE_UUID) {
                     Characteristic(GATT_CHAR_UUID, readable, setOf(Permission.READ)) {

@@ -64,6 +64,7 @@ import no.nordicsemi.kotlin.ble.client.android.ConjunctionFilterScope
 import no.nordicsemi.kotlin.ble.client.android.EncryptionState
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.android.ScanResult
+import no.nordicsemi.kotlin.ble.client.android.exception.BondingFailedException
 import no.nordicsemi.kotlin.ble.client.android.exception.ScanningFailedToStartException
 import no.nordicsemi.kotlin.ble.core.BondState
 import no.nordicsemi.kotlin.ble.core.Manager
@@ -80,6 +81,10 @@ import android.bluetooth.le.ScanCallback as NativeScanCallback
 import android.bluetooth.le.ScanResult as NativeScanResult
 import android.bluetooth.le.ScanSettings as NativeScanSettings
 
+/** The hidden extra of the bond state broadcast with the reason why the bond state is NONE. */
+private const val EXTRA_UNBOND_REASON = "android.bluetooth.device.extra.REASON"
+private const val UNBOND_REASON_UNKNOWN = 0
+
 /**
  * A native implementation of [CentralManager] for Android.
  *
@@ -93,8 +98,14 @@ internal class NativeCentralManagerImpl(
     override var logger: Log.Sink<Layer>? = Log.Sink.Null
     override val state = environment.bluetoothState
 
-    private val _bondState =
-        MutableSharedFlow<Pair<String, BondState>>(extraBufferCapacity = 1)
+    /** A change of the bond state of a device, with the reason when the bonding failed. */
+    private class BondEvent(
+        val address: String,
+        val state: BondState,
+        val failureReason: BondingFailedException.Reason?,
+    )
+
+    private val _bondState = MutableSharedFlow<BondEvent>(extraBufferCapacity = 1)
 
     private val bondStateBroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -107,7 +118,12 @@ internal class NativeCentralManagerImpl(
             val previousBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.BOND_NONE).toBondState()
             val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE).toBondState()
             logger?.info(Layer.SMP) { "Bond state of $device changed: $previousBondState -> $bondState" }
-            _bondState.tryEmit(device.address to bondState)
+            // When the bond state changes to NONE, the intent has a hidden extra with the reason.
+            val failureReason = intent
+                .takeIf { previousBondState == BondState.BONDING && bondState == BondState.NONE }
+                ?.getIntExtra(EXTRA_UNBOND_REASON, UNBOND_REASON_UNKNOWN)
+                ?.toBondingFailureReason()
+            _bondState.tryEmit(BondEvent(device.address, bondState, failureReason))
         }
     }
 
@@ -203,11 +219,28 @@ internal class NativeCentralManagerImpl(
         }
     }
 
+    /**
+     * Converts the unbond reason, which is not a part of the public API, but is delivered with
+     * the broadcast. The values are defined in `BluetoothDevice.UNBOND_REASON_*`.
+     */
+    private fun Int.toBondingFailureReason(): BondingFailedException.Reason = when (this) {
+        1 -> BondingFailedException.Reason.AuthenticationFailed
+        2 -> BondingFailedException.Reason.AuthenticationRejected
+        3 -> BondingFailedException.Reason.AuthenticationCanceled
+        4 -> BondingFailedException.Reason.RemoteDeviceDown
+        5 -> BondingFailedException.Reason.DiscoveryInProgress
+        6 -> BondingFailedException.Reason.AuthenticationTimeout
+        7 -> BondingFailedException.Reason.RepeatedAttempts
+        8 -> BondingFailedException.Reason.RemoteAuthenticationCanceled
+        9 -> BondingFailedException.Reason.Removed
+        else -> BondingFailedException.Reason.Unknown
+    }
+
     /** Forwards the bond state and encryption state of the device with the given address. */
     private fun NativeExecutor.observeBroadcasts(address: String) {
         _bondState
-            .filter { (deviceAddress, _) -> deviceAddress == address }
-            .onEach { (_, state) -> onBondStateChanged(state) }
+            .filter { it.address == address }
+            .onEach { onBondStateChanged(it.state, it.failureReason) }
             .launchIn(scope)
         _encryptionState
             .filter { (deviceAddress, _) -> deviceAddress == address }

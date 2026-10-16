@@ -342,6 +342,17 @@ class PeripheralSpec<ID: Any> private constructor(
         }
     }
 
+    @Volatile
+    private var _bondFailureReason: BondResult.Reject.Reason? = null
+
+    /**
+     * The reason why the most recent bonding failed, or `null` if it did not.
+     *
+     * It is set before [bondState] changes to [BondState.NONE].
+     */
+    val bondFailureReason: BondResult.Reject.Reason?
+        get() = _bondFailureReason
+
     /** Whether the phone has the bond information of the peripheral. */
     val isBonded: Boolean
         get() = _bondState.value == BondState.BONDED
@@ -836,16 +847,17 @@ class PeripheralSpec<ID: Any> private constructor(
         if (!_bondState.compareAndSet(BondState.NONE, BondState.BONDING)) {
             return
         }
+        _bondFailureReason = null
         // The result is reported later, so that the clients can observe the BONDING state.
         launchShared {
             val result = try {
                 when {
                     // The peripheral does not pair again with a phone that it is bonded with.
-                    peripheralHasBond -> BondResult.Reject
-                    else -> eventHandler?.onBondRequest() ?: BondResult.Reject
+                    peripheralHasBond -> BondResult.Reject()
+                    else -> eventHandler?.onBondRequest() ?: BondResult.Reject()
                 }
             } catch (_: Exception) {
-                BondResult.Reject
+                BondResult.Reject()
             }
             when (result) {
                 BondResult.Accept -> {
@@ -854,7 +866,12 @@ class PeripheralSpec<ID: Any> private constructor(
                     updateLinkEncryption(bonded = true)
                     _bondState.value = BondState.BONDED
                 }
-                BondResult.Reject -> _bondState.value = BondState.NONE
+                is BondResult.Reject -> {
+                    // The reason is set before the state, so that it is available when the
+                    // clients are notified.
+                    _bondFailureReason = result.reason
+                    _bondState.value = BondState.NONE
+                }
             }
         }
     }
