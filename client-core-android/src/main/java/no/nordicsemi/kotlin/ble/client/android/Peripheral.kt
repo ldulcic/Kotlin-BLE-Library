@@ -352,6 +352,7 @@ open class Peripheral(
         // Start connection attempt, based on the connection options.
         logger?.trace(Layer.GAP) { "Connecting to $this using $options" }
         automaticallyRequestHighestValueLength = options.automaticallyRequestHighestValueLength
+        isAutoReconnectBroken = false
         _state.update { ConnectionState.Connecting }
         when (options) {
             // In case of auto connect, the connection attempt does not time out.
@@ -540,6 +541,18 @@ open class Peripheral(
             isPreparingConnection = false
         }
     }
+
+    /**
+     * Set when bonding failed while the peripheral was connected.
+     *
+     * Android terminates the link then, and the pending auto connect does not work after that: the
+     * system does not reconnect, although the connection was requested with auto connect.
+     */
+    @Volatile
+    private var isAutoReconnectBroken = false
+
+    override val isAutoReconnectExpected: Boolean
+        get() = !isAutoReconnectBroken
 
     override fun handleDisconnection() {
         super.handleDisconnection()
@@ -1008,10 +1021,18 @@ open class Peripheral(
                     // And process it.
                     .also {
                         when (it) {
-                            BondState.BONDED -> logger?.info(Layer.SMP) { "Bond created" }
+                            BondState.BONDED -> {
+                                logger?.info(Layer.SMP) { "Bond created" }
+                                isAutoReconnectBroken = false
+                            }
                             BondState.NONE -> {
                                 val reason = impl.bondFailureReason ?: BondingFailedException.Reason.Unknown
                                 logger?.warn(Layer.SMP) { "Bonding failed: $reason" }
+                                // Android terminates the link after a failed pairing, and it is not
+                                // reconnected, even if the connection was started with auto connect.
+                                if (isConnected) {
+                                    isAutoReconnectBroken = true
+                                }
                                 throw BondingFailedException(reason)
                             }
                             else -> { /* Not possible */ }

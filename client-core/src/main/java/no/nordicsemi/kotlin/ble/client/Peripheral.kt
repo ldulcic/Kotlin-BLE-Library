@@ -399,10 +399,12 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
                         // ...when the connection was terminated using disconnect() or canceled,
                         // or the closeWhenDisconnected flag was set (no automatic reconnection),
                         // or connection failed due to insufficient authentication (bond info removed from peer),
+                        // or the system is known not to reconnect (see isAutoReconnectExpected),
                         // process the event and cancel the collector.
                         if (closeWhenDisconnected ||
                             event.newState.isUserInitiated ||
-                            event.newState.reason is ConnectionState.Disconnected.Reason.InsufficientAuthentication) {
+                            event.newState.reason is ConnectionState.Disconnected.Reason.InsufficientAuthentication ||
+                            !isAutoReconnectExpected) {
                             handle(event)
                             // Close the peripheral and stop collecting the events.
                             close()
@@ -431,6 +433,17 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
             // just after the connection was established, would be lost.
             .let { events -> scope.launch(start = CoroutineStart.UNDISPATCHED) { events.collect {} } }
     }
+
+    /**
+     * Whether the system is expected to reconnect automatically after the link is lost.
+     *
+     * When `false`, a lost link is reported as a disconnection, and the peripheral is closed,
+     * even if the connection was started with auto connect. The implementation should return
+     * `false` when it knows that the system will not reconnect.
+     * @hide
+     */
+    protected open val isAutoReconnectExpected: Boolean
+        get() = true
 
     /**
      * Cancels collection of GATT events and closes the connection.
