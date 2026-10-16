@@ -138,7 +138,7 @@ class GattReadWriteTest {
     @Test
     fun `read of an encrypted characteristic fails with InsufficientAuthentication when bonding is rejected`() = runTest {
         withTimeout(10.seconds) {
-            val handler = GattHandler().apply { bondResult = BondResult.Reject }
+            val handler = GattHandler().apply { bondResult = BondResult.Reject() }
             val fixture = gattSingleCharacteristic(
                 handler,
                 properties = readable,
@@ -435,7 +435,7 @@ class GattReadWriteTest {
     @Test
     fun `write to an encrypted characteristic fails with InsufficientAuthentication when bonding is rejected`() = runTest {
         withTimeout(10.seconds) {
-            val handler = GattHandler().apply { bondResult = BondResult.Reject }
+            val handler = GattHandler().apply { bondResult = BondResult.Reject() }
             val fixture = gattSingleCharacteristic(
                 handler,
                 properties = setOf(CharacteristicProperty.WRITE),

@@ -288,7 +288,7 @@ class ConnectionBondingTest {
     @Test
     fun `rejected bond request fails creating the bond`() = runTest {
         val rejecting = object : PeripheralSpecEventHandler {
-            override fun onBondRequest() = BondResult.Reject
+            override fun onBondRequest() = BondResult.Reject()
         }
         val manager = manager(spec(isBonded = false, eventHandler = rejecting))
         val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
@@ -441,4 +441,75 @@ class ConnectionBondingTest {
 
         assertEquals(BondState.BONDED, peripheral.bondState.value)
     }
+
+    private suspend fun TestScope.failedBondingReason(result: BondResult): BondingFailedException.Reason {
+        val rejecting = object : PeripheralSpecEventHandler {
+            override fun onBondRequest() = result
+        }
+        val manager = manager(spec(isBonded = false, eventHandler = rejecting))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        return assertFailsWith<BondingFailedException> { peripheral.createBond() }.reason
+    }
+
+    @Test
+    fun `rejected bonding reports the peripheral rejecting it by default`() = runTest {
+        assertEquals(
+            BondingFailedException.Reason.AuthenticationRejected,
+            failedBondingReason(BondResult.Reject()),
+        )
+    }
+
+    @Test
+    fun `bonding cancelled by the user reports the reason`() = runTest {
+        assertEquals(
+            BondingFailedException.Reason.AuthenticationCanceled,
+            failedBondingReason(BondResult.Reject(BondResult.Reject.Reason.Cancelled)),
+        )
+    }
+
+    @Test
+    fun `bonding with a wrong PIN reports the reason`() = runTest {
+        assertEquals(
+            BondingFailedException.Reason.AuthenticationFailed,
+            failedBondingReason(BondResult.Reject(BondResult.Reject.Reason.AuthenticationFailed)),
+        )
+    }
+
+    @Test
+    fun `bonding that timed out reports the reason`() = runTest {
+        assertEquals(
+            BondingFailedException.Reason.AuthenticationTimeout,
+            failedBondingReason(BondResult.Reject(BondResult.Reject.Reason.Timeout)),
+        )
+    }
+
+    @Test
+    fun `bonding with a peripheral that still has the bond reports it was rejected`() = runTest {
+        val manager = manager(spec(isBonded = false, peripheralHasBond = true))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+
+        val exception = assertFailsWith<BondingFailedException> { peripheral.createBond() }
+
+        assertEquals(BondingFailedException.Reason.AuthenticationRejected, exception.reason)
+    }
+
+    @Test
+    fun `reason of a failed bonding is not kept after bonding succeeds`() = runTest {
+        var result: BondResult = BondResult.Reject(BondResult.Reject.Reason.Cancelled)
+        val handler = object : PeripheralSpecEventHandler {
+            override fun onBondRequest() = result
+        }
+        val spec = spec(isBonded = false, eventHandler = handler)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        assertFailsWith<BondingFailedException> { peripheral.createBond() }
+
+        result = BondResult.Accept
+        peripheral.createBond()
+
+        assertEquals(BondState.BONDED, peripheral.bondState.value)
+        assertEquals(null, spec.bondFailureReason)
+    }
 }
+

@@ -44,6 +44,7 @@ import no.nordicsemi.kotlin.ble.client.android.CentralManager
 import no.nordicsemi.kotlin.ble.client.android.ConnectionPriority
 import no.nordicsemi.kotlin.ble.client.android.EncryptionState
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
+import no.nordicsemi.kotlin.ble.client.android.exception.BondingFailedException
 import no.nordicsemi.kotlin.ble.client.exception.OperationFailedException
 import no.nordicsemi.kotlin.ble.core.ATT_MTU_DEFAULT
 import no.nordicsemi.kotlin.ble.core.BondState
@@ -115,10 +116,19 @@ internal class NativeExecutor(
     private var _bondState = MutableStateFlow(bluetoothDevice.bondState.toBondState())
     override val bondState = _bondState.asStateFlow()
 
+    override var bondFailureReason: BondingFailedException.Reason? = null
+        private set
+
     /**
      * This method is called when the bond state of the device changes.
+     *
+     * @param state The new bond state.
+     * @param failureReason The reason why bonding failed, if [state] is [BondState.NONE] after
+     * [BondState.BONDING].
      */
-    internal fun onBondStateChanged(state: BondState) {
+    internal fun onBondStateChanged(state: BondState, failureReason: BondingFailedException.Reason? = null) {
+        // The reason is set before the state, so that it is available when the state is received.
+        bondFailureReason = failureReason
         _bondState.value = state
     }
 

@@ -41,6 +41,8 @@ import kotlinx.coroutines.withTimeout
 import no.nordicsemi.kotlin.ble.client.android.ConnectionPriority
 import no.nordicsemi.kotlin.ble.client.android.EncryptionState
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
+import no.nordicsemi.kotlin.ble.client.android.exception.BondingFailedException
+import no.nordicsemi.kotlin.ble.client.mock.BondResult
 import no.nordicsemi.kotlin.ble.client.mock.LinkEncryption
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.client.mock.internal.MockExecutor
@@ -75,6 +77,15 @@ open class MockExecutor(
     override val type: PeripheralType = peripheralSpec.type
 
     override val bondState = peripheralSpec.bondState
+
+    override val bondFailureReason: BondingFailedException.Reason?
+        get() = when (peripheralSpec.bondFailureReason) {
+            null -> null
+            BondResult.Reject.Reason.Rejected -> BondingFailedException.Reason.AuthenticationRejected
+            BondResult.Reject.Reason.Cancelled -> BondingFailedException.Reason.AuthenticationCanceled
+            BondResult.Reject.Reason.AuthenticationFailed -> BondingFailedException.Reason.AuthenticationFailed
+            BondResult.Reject.Reason.Timeout -> BondingFailedException.Reason.AuthenticationTimeout
+        }
 
     override val encryptionState: StateFlow<EncryptionState> = peripheralSpec.linkEncryption
         .map { it.toEncryptionState() }

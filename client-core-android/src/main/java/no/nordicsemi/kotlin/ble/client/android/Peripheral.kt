@@ -138,6 +138,15 @@ open class Peripheral(
         val encryptionState: StateFlow<EncryptionState>
 
         /**
+         * The reason why the most recent bonding failed, or `null` if it did not, or the reason
+         * is not known.
+         *
+         * It must be set before [BondState.NONE] is emitted to [bondState] as the result of
+         * a failed [createBond].
+         */
+        val bondFailureReason: BondingFailedException.Reason?
+
+        /**
          * Requests the connection priority to be changed.
          *
          * The result should be reported by emitting [ConnectionParametersChanged] event
@@ -1001,8 +1010,9 @@ open class Peripheral(
                         when (it) {
                             BondState.BONDED -> logger?.info(Layer.SMP) { "Bond created" }
                             BondState.NONE -> {
-                                logger?.warn(Layer.SMP) { "Bonding failed" }
-                                throw BondingFailedException()
+                                val reason = impl.bondFailureReason ?: BondingFailedException.Reason.Unknown
+                                logger?.warn(Layer.SMP) { "Bonding failed: $reason" }
+                                throw BondingFailedException(reason)
                             }
                             else -> { /* Not possible */ }
                         }
