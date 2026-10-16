@@ -33,15 +33,12 @@ package no.nordicsemi.kotlin.ble.client.android.mock.internal
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withTimeout
 import no.nordicsemi.kotlin.ble.client.android.ConnectionPriority
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.client.mock.internal.MockExecutor
 import no.nordicsemi.kotlin.ble.client.mock.internal.MockScanResult
-import no.nordicsemi.kotlin.ble.core.BondState
 import no.nordicsemi.kotlin.ble.core.ConnectionParameters
 import no.nordicsemi.kotlin.ble.core.PeripheralType
 import no.nordicsemi.kotlin.ble.core.Phy
@@ -71,11 +68,7 @@ open class MockExecutor(
 ): MockExecutor(peripheralSpec, name, environment, advertisements, scope), Peripheral.Executor {
     override val type: PeripheralType = peripheralSpec.type
 
-    /** The current bond state. */
-    private val _bondState = MutableStateFlow(
-        if (peripheralSpec.isBonded) BondState.BONDED else BondState.NONE
-    )
-    override val bondState = _bondState.asStateFlow()
+    override val bondState = peripheralSpec.bondState
 
     // Implementation
 
@@ -100,13 +93,15 @@ open class MockExecutor(
     }
 
     override suspend fun createBond(): Boolean {
-        TODO("Not yet implemented")
+        // The result is reported by the bond state. A rejected request ends with BondState.NONE.
+        peripheralSpec.simulateBonding()
+        return true
     }
 
     override suspend fun removeBond(): Boolean {
-        TODO("Not yet implemented")
-        // Check isBluetoothPrivilegedPermissionGranted() for Android 17+
-        // Android 4.3 was failing to remove bond information. After a reboot it was restored.
+        // Removing the bond information terminates the connection.
+        peripheralSpec.simulateBondRemoval()
+        return true
     }
 
     override suspend fun refreshCache(): Boolean {
