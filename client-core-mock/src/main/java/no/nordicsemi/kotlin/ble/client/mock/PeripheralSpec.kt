@@ -318,6 +318,30 @@ class PeripheralSpec<ID: Any> private constructor(
      */
     val bondState: StateFlow<BondState> = _bondState.asStateFlow()
 
+    private val _linkEncryption = MutableStateFlow(LinkEncryption.NotConnected)
+
+    /**
+     * The encryption of the link with the phone.
+     *
+     * A bonded peripheral encrypts the link right after connecting, unless it does not have the
+     * bond information ([peripheralHasBond]), which the phone has. Bonding encrypts the link.
+     */
+    val linkEncryption: StateFlow<LinkEncryption> = _linkEncryption.asStateFlow()
+
+    /**
+     * Updates [linkEncryption] after the connection state or bond state changed.
+     *
+     * @param bonded Whether the phone is (being) bonded.
+     */
+    private fun updateLinkEncryption(bonded: Boolean = isBonded) {
+        _linkEncryption.value = when {
+            !isConnected -> LinkEncryption.NotConnected
+            !bonded -> LinkEncryption.NotEncrypted
+            peripheralHasBond -> LinkEncryption.Encrypted
+            else -> LinkEncryption.KeyMissing
+        }
+    }
+
     /** Whether the phone has the bond information of the peripheral. */
     val isBonded: Boolean
         get() = _bondState.value == BondState.BONDED
@@ -362,9 +386,11 @@ class PeripheralSpec<ID: Any> private constructor(
                 mtu = null
                 llMtu = null
                 connectionParameters = null
+                updateLinkEncryption()
             } else if (mtu == null) {
                 // If first connection, set default parameters.
                 setDefaultConnectionState(PhyInUse.PHY_LE_1M)
+                updateLinkEncryption()
             }
         }
 
@@ -392,6 +418,7 @@ class PeripheralSpec<ID: Any> private constructor(
         // connection the peripheral is initially connected with is set here.
         if (activePhy != null) {
             setDefaultConnectionState(activePhy)
+            updateLinkEncryption()
         }
     }
 
@@ -823,6 +850,8 @@ class PeripheralSpec<ID: Any> private constructor(
             when (result) {
                 BondResult.Accept -> {
                     peripheralHasBond = true
+                    // The link is encrypted, and then the bond is created.
+                    updateLinkEncryption(bonded = true)
                     _bondState.value = BondState.BONDED
                 }
                 BondResult.Reject -> _bondState.value = BondState.NONE
@@ -840,7 +869,9 @@ class PeripheralSpec<ID: Any> private constructor(
      */
     internal suspend fun requestAuthentication(): Boolean {
         simulateBonding()
-        return _bondState.first { it != BondState.BONDING } == BondState.BONDED
+        val bonded = _bondState.first { it != BondState.BONDING } == BondState.BONDED
+        // The peripheral does not have the key, so the link cannot be encrypted.
+        return bonded && _linkEncryption.value != LinkEncryption.KeyMissing
     }
 
     /**

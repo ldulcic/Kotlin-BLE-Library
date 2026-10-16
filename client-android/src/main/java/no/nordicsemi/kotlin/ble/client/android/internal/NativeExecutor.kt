@@ -42,6 +42,7 @@ import no.nordicsemi.kotlin.ble.client.GattEvent
 import no.nordicsemi.kotlin.ble.client.RemoteService
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
 import no.nordicsemi.kotlin.ble.client.android.ConnectionPriority
+import no.nordicsemi.kotlin.ble.client.android.EncryptionState
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.exception.OperationFailedException
 import no.nordicsemi.kotlin.ble.core.ATT_MTU_DEFAULT
@@ -119,6 +120,21 @@ internal class NativeExecutor(
      */
     internal fun onBondStateChanged(state: BondState) {
         _bondState.value = state
+    }
+
+    /**
+     * The current state of the encryption of the link.
+     *
+     * It is reported from Android 16, when the broadcasts became public.
+     */
+    private val _encryptionState = MutableStateFlow<EncryptionState>(EncryptionState.Unknown)
+    override val encryptionState = _encryptionState.asStateFlow()
+
+    /**
+     * This method is called when the state of the encryption of the link changes.
+     */
+    internal fun onEncryptionStateChanged(state: EncryptionState) {
+        _encryptionState.value = state
     }
 
     // Implementation
