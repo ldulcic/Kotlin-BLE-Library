@@ -620,6 +620,14 @@ class PeripheralSpec<ID: Any> private constructor(
         private const val LL_UPDATE_INSTANT_EVENTS = 6
 
         /**
+         * The time after which the phone terminates the link when pairing failed.
+         *
+         * Observed in the HCI log of Android phones (Android 6, 16): the HCI Disconnect command
+         * is sent exactly 3 seconds after the SMP Pairing Failed.
+         */
+        private val FAILED_PAIRING_DISCONNECTION_DELAY = 3.seconds
+
+        /**
          * Simulates a peripheral with given ID and proximity.
          *
          * Note, that if the identifier is a Bluetooth Address, the 2 most significant bits
@@ -825,11 +833,31 @@ class PeripheralSpec<ID: Any> private constructor(
      */
     // TODO Add Error to be returned to the clients?
     fun simulateDisconnection() {
+        terminateConnection(
+            reason = Reason.TerminatePeerUser,
+            handlerReason = DisconnectionReason.TerminateLocalHost,
+        )
+    }
+
+    /**
+     * Terminates the connection of all the clients, which is initiated by the phone.
+     *
+     * The clients are notified with [Reason.TerminateLocalHost] and the event handler of the
+     * peripheral with [DisconnectionReason.TerminatePeerUser].
+     */
+    private fun terminateConnectionByPhone() {
+        terminateConnection(
+            reason = Reason.TerminateLocalHost,
+            handlerReason = DisconnectionReason.TerminatePeerUser,
+        )
+    }
+
+    private fun terminateConnection(reason: Reason, handlerReason: DisconnectionReason) {
         if (isConnected) {
             // TODO Should we delay this to simulate connection interval?
             connectionsCount = 0
-            eventHandler!!.onConnectionLost(DisconnectionReason.TerminateLocalHost)
-            _events.tryEmit(ConnectionStateChanged(ConnectionState.Disconnected(Reason.TerminatePeerUser)))
+            eventHandler!!.onConnectionLost(handlerReason)
+            _events.tryEmit(ConnectionStateChanged(ConnectionState.Disconnected(reason)))
         }
     }
 
@@ -840,6 +868,9 @@ class PeripheralSpec<ID: Any> private constructor(
      * [PeripheralSpecEventHandler.onBondRequest], to [BondState.BONDED] or back to [BondState.NONE].
      * The peripheral rejects bonding if it still has the bond information ([peripheralHasBond])
      * and the phone does not, or if it is not connectable.
+     *
+     * When the bonding fails while the peripheral is connected, the phone terminates the link
+     * 3 seconds later, like Android does. The clients get [Reason.TerminateLocalHost].
      *
      * Does nothing if the peripheral is already bonded, or the bonding is in progress.
      */
@@ -871,6 +902,15 @@ class PeripheralSpec<ID: Any> private constructor(
                     // clients are notified.
                     _bondFailureReason = result.reason
                     _bondState.value = BondState.NONE
+                    // Android terminates the link after a failed pairing.
+                    if (isConnected) {
+                        val epoch = connectionEpoch
+                        delay(FAILED_PAIRING_DISCONNECTION_DELAY)
+                        // The connection could have ended or been established again in the meantime.
+                        if (epoch == connectionEpoch) {
+                            terminateConnectionByPhone()
+                        }
+                    }
                 }
             }
         }
@@ -894,13 +934,14 @@ class PeripheralSpec<ID: Any> private constructor(
     /**
      * Simulates the phone removing the bond information of the peripheral.
      *
-     * The peripheral keeps its bond information ([peripheralHasBond]). The connection is terminated.
+     * The peripheral keeps its bond information ([peripheralHasBond]). The connection is terminated
+     * by the phone.
      *
      * @see simulatePeripheralBondLoss
      */
     fun simulateBondRemoval() {
         _bondState.value = BondState.NONE
-        simulateDisconnection()
+        terminateConnectionByPhone()
     }
 
     /**

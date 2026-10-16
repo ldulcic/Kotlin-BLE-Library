@@ -43,6 +43,7 @@ import no.nordicsemi.kotlin.ble.client.android.CentralManager.ConnectionOptions
 import no.nordicsemi.kotlin.ble.client.android.exception.BondingFailedException
 import no.nordicsemi.kotlin.ble.client.mock.AddressType
 import no.nordicsemi.kotlin.ble.client.mock.BondResult
+import no.nordicsemi.kotlin.ble.client.mock.DisconnectionReason
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpecEventHandler
 import no.nordicsemi.kotlin.ble.core.BondState
@@ -565,6 +566,81 @@ class ConnectionBondingTest {
         runCurrent()
 
         assertEquals(ConnectionState.Connected, peripheral.state.value)
+    }
+
+    /** Rejects bonding and records how connections end. */
+    private class RejectingHandler : PeripheralSpecEventHandler {
+        val connectionsLost = mutableListOf<DisconnectionReason>()
+
+        override fun onBondRequest() = BondResult.Reject()
+
+        override fun onConnectionLost(reason: DisconnectionReason) {
+            connectionsLost += reason
+        }
+    }
+
+    @Test
+    fun `phone terminates the link 3 seconds after bonding failed`() = runTest {
+        val handler = RejectingHandler()
+        val manager = manager(spec(isBonded = false, eventHandler = handler))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        assertFailsWith<BondingFailedException> { peripheral.createBond() }
+
+        advanceTimeBy(2.9.seconds)
+        runCurrent()
+        assertEquals(ConnectionState.Connected, peripheral.state.value)
+
+        advanceTimeBy(0.2.seconds)
+        runCurrent()
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(ConnectionState.Disconnected.Reason.TerminateLocalHost, state.reason)
+        // The peripheral sees that the phone has terminated the connection.
+        assertEquals(listOf<DisconnectionReason>(DisconnectionReason.TerminatePeerUser), handler.connectionsLost)
+    }
+
+    @Test
+    fun `link is not terminated when bonding succeeded`() = runTest {
+        val manager = manager(spec(isBonded = false))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        peripheral.createBond()
+
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        assertEquals(ConnectionState.Connected, peripheral.state.value)
+    }
+
+    @Test
+    fun `link is not terminated twice when it was lost before bonding timed out`() = runTest {
+        val handler = RejectingHandler()
+        val spec = spec(isBonded = false, eventHandler = handler)
+        val manager = manager(spec)
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+        assertFailsWith<BondingFailedException> { peripheral.createBond() }
+
+        spec.simulateDisconnection()
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        assertEquals(listOf<DisconnectionReason>(DisconnectionReason.TerminateLocalHost), handler.connectionsLost)
+    }
+
+    @Test
+    fun `bond removal is a disconnection initiated by the phone`() = runTest {
+        val handler = RejectingHandler()
+        val manager = manager(spec(isBonded = true, eventHandler = handler))
+        val peripheral = checkNotNull(manager.getPeripheralById(ADDRESS))
+        manager.connect(peripheral)
+
+        peripheral.removeBond()
+        runCurrent()
+
+        val state = assertIs<ConnectionState.Disconnected>(peripheral.state.value)
+        assertEquals(ConnectionState.Disconnected.Reason.TerminateLocalHost, state.reason)
+        assertEquals(listOf<DisconnectionReason>(DisconnectionReason.TerminatePeerUser), handler.connectionsLost)
     }
 }
 
