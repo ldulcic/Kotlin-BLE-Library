@@ -36,10 +36,12 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import no.nordicsemi.kotlin.ble.client.exception.OperationFailedException
+import no.nordicsemi.kotlin.ble.client.mock.BondResult
 import no.nordicsemi.kotlin.ble.client.mock.ReadResponse
 import no.nordicsemi.kotlin.ble.client.mock.WriteResponse
 import no.nordicsemi.kotlin.ble.core.CharacteristicProperty
 import no.nordicsemi.kotlin.ble.core.Descriptor
+import no.nordicsemi.kotlin.ble.core.BondState
 import no.nordicsemi.kotlin.ble.core.OperationStatus
 import no.nordicsemi.kotlin.ble.core.Permission
 import no.nordicsemi.kotlin.ble.core.WriteType
@@ -117,9 +119,28 @@ class GattReadWriteTest {
     }
 
     @Test
-    fun `read of an encrypted characteristic on a not bonded device fails with InsufficientAuthentication`() = runTest {
+    fun `read of an encrypted characteristic on a not bonded device bonds and succeeds`() = runTest {
         withTimeout(10.seconds) {
+            val handler = GattHandler().apply { readHandler = { ReadResponse.Success(byteArrayOf(0x01)) } }
             val fixture = gattSingleCharacteristic(
+                handler,
+                properties = readable,
+                permissions = setOf(Permission.READ_ENCRYPTED),
+            )
+
+            val result = fixture.characteristic().read()
+
+            assertContentEquals(byteArrayOf(0x01), result)
+            assertEquals(BondState.BONDED, fixture.peripheral.bondState.value)
+        }
+    }
+
+    @Test
+    fun `read of an encrypted characteristic fails with InsufficientAuthentication when bonding is rejected`() = runTest {
+        withTimeout(10.seconds) {
+            val handler = GattHandler().apply { bondResult = BondResult.Reject }
+            val fixture = gattSingleCharacteristic(
+                handler,
                 properties = readable,
                 permissions = setOf(Permission.READ_ENCRYPTED),
             )
@@ -129,6 +150,8 @@ class GattReadWriteTest {
             }
 
             assertEquals(OperationStatus.InsufficientAuthentication, exception.reason)
+            assertEquals(BondState.NONE, fixture.peripheral.bondState.value)
+            assertTrue(handler.reads.isEmpty(), "Request should not be sent to the peripheral")
         }
     }
 
@@ -393,9 +416,28 @@ class GattReadWriteTest {
     }
 
     @Test
-    fun `write to an encrypted characteristic on a not bonded device fails with InsufficientAuthentication`() = runTest {
+    fun `write to an encrypted characteristic on a not bonded device bonds and succeeds`() = runTest {
         withTimeout(10.seconds) {
+            val handler = GattHandler()
             val fixture = gattSingleCharacteristic(
+                handler,
+                properties = setOf(CharacteristicProperty.WRITE),
+                permissions = setOf(Permission.WRITE_ENCRYPTED),
+            )
+
+            fixture.characteristic().write(byteArrayOf(0x01))
+
+            assertEquals(1, handler.writeRequests.size)
+            assertEquals(BondState.BONDED, fixture.peripheral.bondState.value)
+        }
+    }
+
+    @Test
+    fun `write to an encrypted characteristic fails with InsufficientAuthentication when bonding is rejected`() = runTest {
+        withTimeout(10.seconds) {
+            val handler = GattHandler().apply { bondResult = BondResult.Reject }
+            val fixture = gattSingleCharacteristic(
+                handler,
                 properties = setOf(CharacteristicProperty.WRITE),
                 permissions = setOf(Permission.WRITE_ENCRYPTED),
             )
@@ -405,6 +447,8 @@ class GattReadWriteTest {
             }
 
             assertEquals(OperationStatus.InsufficientAuthentication, exception.reason)
+            assertEquals(BondState.NONE, fixture.peripheral.bondState.value)
+            assertTrue(handler.writeRequests.isEmpty())
         }
     }
 

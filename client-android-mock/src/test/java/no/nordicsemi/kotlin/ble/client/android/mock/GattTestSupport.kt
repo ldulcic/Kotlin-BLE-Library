@@ -44,6 +44,7 @@ import no.nordicsemi.kotlin.ble.client.RemoteServices
 import no.nordicsemi.kotlin.ble.client.android.CentralManager
 import no.nordicsemi.kotlin.ble.client.android.Peripheral
 import no.nordicsemi.kotlin.ble.client.mock.AddressType
+import no.nordicsemi.kotlin.ble.client.mock.BondResult
 import no.nordicsemi.kotlin.ble.client.mock.ConnectionResult
 import no.nordicsemi.kotlin.ble.client.mock.MockServerScope
 import no.nordicsemi.kotlin.ble.client.mock.PeripheralSpec
@@ -88,6 +89,7 @@ internal class GattHandler : PeripheralSpecEventHandler {
         { _, value -> PrepareWriteResponse.Success(value) }
     var executeHandler: (Boolean) -> WriteResponse = { WriteResponse.Success }
     var discoveryResult: ServiceDiscoveryResult = ServiceDiscoveryResult.Success
+    var bondResult: BondResult = BondResult.Accept
 
     val reads = mutableListOf<Uuid>()
     val descriptorReads = mutableListOf<Uuid>()
@@ -98,8 +100,14 @@ internal class GattHandler : PeripheralSpecEventHandler {
     val descriptorPrepareWrites = mutableListOf<Pair<Uuid, ByteArray>>()
     val executeWrites = mutableListOf<Boolean>()
     val discoveryRequests = mutableListOf<List<Uuid>>()
+    var bondRequests = 0
 
     override fun onConnectionRequest(phy: PrimaryPhy) = ConnectionResult.Accept
+
+    override fun onBondRequest(): BondResult {
+        bondRequests++
+        return bondResult
+    }
 
     override fun onServiceDiscoveryRequest(uuids: List<Uuid>): ServiceDiscoveryResult {
         discoveryRequests += uuids
@@ -194,12 +202,14 @@ internal class GattFixture(
  * Creates a connectable simulated peripheral. With a default [maxAttMtu] of 23 the largest
  * single-packet write is 20 bytes (MTU - 3) and the largest single-packet read is 22 (MTU - 1).
  *
- * If [bonded], the peripheral is already bonded and has its services cached.
+ * If [bonded], the peripheral is already bonded and has its services cached. [peripheralHasBond]
+ * tells whether the peripheral stores the bond too.
  */
 internal fun TestScope.gattFixture(
     handler: GattHandler = GattHandler(),
     maxAttMtu: Int = 23,
     bonded: Boolean = false,
+    peripheralHasBond: Boolean = bonded,
     services: MockServerScope.() -> Unit,
 ): GattFixture {
     val spec = PeripheralSpec.simulatePeripheral(
@@ -214,11 +224,12 @@ internal fun TestScope.gattFixture(
         // The below are NOT THE SAME METHOD with different isBonded value.
         // The first one makes the device known (scanned before), while the other not.
         // DO NOT MERGE it into a single call with isBonded = bonded.
-        if (bonded) {
+        if (bonded || peripheralHasBond) {
             connectable(
                 name = "Gatt",
                 maxAttMtu = maxAttMtu,
-                isBonded = true,
+                isBonded = bonded,
+                peripheralHasBond = peripheralHasBond,
                 eventHandler = handler,
                 cachedServices = services,
             )
@@ -241,9 +252,10 @@ internal fun TestScope.gattSingleCharacteristic(
     handler: GattHandler = GattHandler(),
     maxAttMtu: Int = 23,
     bonded: Boolean = false,
+    peripheralHasBond: Boolean = bonded,
     properties: Set<no.nordicsemi.kotlin.ble.core.CharacteristicProperty>,
     permissions: Set<no.nordicsemi.kotlin.ble.core.Permission>,
-): GattFixture = gattFixture(handler, maxAttMtu, bonded) {
+): GattFixture = gattFixture(handler, maxAttMtu, bonded, peripheralHasBond) {
     Service(GATT_SERVICE_UUID) {
         Characteristic(GATT_CHAR_UUID, properties, permissions)
     }
