@@ -241,7 +241,9 @@ fun DeviceItem(
                         rssiMonitor = rssiMonitor,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
-                    val services by peripheral.services().collectAsStateWithLifecycle()
+                    // While connected, each call to services() after a failed discovery starts a new one.
+                    val services by remember(peripheral) { peripheral.services() }
+                        .collectAsStateWithLifecycle()
                     DeviceServices(
                         services = services,
                         values = attributeValues,
