@@ -31,12 +31,17 @@
 
 package no.nordicsemi.kotlin.ble.client.android.mock
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import no.nordicsemi.kotlin.ble.client.Peripheral
+import no.nordicsemi.kotlin.ble.client.Profile
+import no.nordicsemi.kotlin.ble.client.RemoteService
 import no.nordicsemi.kotlin.ble.client.RemoteServices
 import no.nordicsemi.kotlin.ble.client.mock.ServiceDiscoveryResult
 import no.nordicsemi.kotlin.ble.client.mock.WriteResponse
@@ -53,6 +58,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -335,6 +341,73 @@ class GattServiceDiscoveryTest {
 
             // ServiceDiscoveryResult.Failure "will return an empty service list to the client".
             assertIs<RemoteServices.Failed>(result)
+        }
+    }
+
+    @Test
+    fun `failed discovery is retried when services are requested again`() = runTest {
+        withTimeout(10.seconds) {
+            val handler = GattHandler().apply { discoveryResult = ServiceDiscoveryResult.Failure }
+            val fixture = gattFixture(handler) { Service(serviceA) }
+            fixture.connect()
+            val failed = fixture.peripheral.services()
+                .first { it is RemoteServices.Discovered || it is RemoteServices.Failed }
+            assertIs<RemoteServices.Failed>(failed)
+            gattSettle()
+            // A failure alone does not start another discovery.
+            assertEquals(1, handler.discoveryRequests.size)
+
+            handler.discoveryResult = ServiceDiscoveryResult.Success
+            val services = fixture.peripheral.services()
+            // Another call while the retry is in progress doesn't start one more.
+            fixture.peripheral.services()
+            val result = services.first { it is RemoteServices.Discovered || it is RemoteServices.Failed }
+
+            val discovered = assertIs<RemoteServices.Discovered>(result)
+            assertEquals(listOf(serviceA), discovered.services.map { it.uuid })
+            assertEquals(2, handler.discoveryRequests.size)
+            assertTrue(fixture.peripheral.isConnected)
+            // No other discovery follows. The mock would return the cached services without
+            // a new request, so check that the state was not replaced.
+            gattSettle()
+            assertSame(result, services.value)
+        }
+    }
+
+    @Test
+    fun `optional profile stops handling a failed discovery before its retry is prepared`() = runTest {
+        withTimeout(10.seconds) {
+            val handler = GattHandler().apply { discoveryResult = ServiceDiscoveryResult.Failure }
+            val fixture = gattFixture(handler) { Service(serviceA) }
+            fixture.connect()
+            val events = mutableListOf<String>()
+            val profile = object : Profile.MultiService(requiredServiceUuids = listOf(serviceA)) {
+                override fun prepare(peripheral: Peripheral<*, *>, services: List<RemoteService>) {
+                    events += "prepare"
+                }
+
+                override suspend fun CoroutineScope.initialize(peripheral: Peripheral<*, *>) {
+                    events += "initialize"
+                }
+
+                override suspend fun failed(peripheral: Peripheral<*, *>, reason: RemoteServices.Failed.Reason) {
+                    events += "failed"
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        events += "failure handled"
+                    }
+                }
+            }
+            val _ = fixture.peripheral.profile(backgroundScope, profile, required = false)
+            fixture.peripheral.services().first { it is RemoteServices.Failed }
+            gattSettle()
+
+            handler.discoveryResult = ServiceDiscoveryResult.Success
+            fixture.peripheral.services().first { it is RemoteServices.Discovered }
+            gattSettle()
+
+            assertEquals(listOf("failed", "failure handled", "prepare", "initialize"), events)
         }
     }
 

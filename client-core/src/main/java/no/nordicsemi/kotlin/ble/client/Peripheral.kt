@@ -773,6 +773,9 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
      * Service change will automatically request service discovery, which, when complete, will emit
      * [Discovered][RemoteServices.Discovered] state with new set of services.
      *
+     * When in [Failed][RemoteServices.Failed], calling [services] again while connected starts
+     * a new service discovery.
+     *
      * ```
      *                           (Initial state)
      *                                  │
@@ -798,11 +801,15 @@ abstract class Peripheral<ID: Any, EX: Peripheral.Executor<ID>>(
         serviceDiscoveryRequested = true
         requestedServiceUuids = (requestedServiceUuids + uuids).distinct()
 
-        // First call to this method triggers service discovery.
+        // First call to this method triggers service discovery. A call after a failed discovery
+        // starts it again, as after a service change, unless the failed attempt is still finishing.
         // TODO With partial service discovery (iOS) a later call with other UUIDs should request
         //  the discovery of UUIDs that haven't been covered yet. Currently, the services that
         //  were not requested by the first call are never discovered, and the filtered flow
         //  below reports an empty list (as if they were not found).
+        if (isConnected && remoteServices.value is RemoteServices.Failed && serviceDiscoveryJob?.isActive != true) {
+            invalidateServices()
+        }
         if (isConnected && remoteServices.value == RemoteServices.Unknown) {
             discoverServices(uuids)
         }
